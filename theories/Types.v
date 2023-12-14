@@ -136,30 +136,3 @@ Qed.
    greater than or equal to its output type size!
    Dizzying implications in terms of what a program has to start with--TODO: figure this out.
    This might be a crucial lemma in proving type safety (since a void output implies void input)! *)
-
-Theorem no_type_has_pack : forall x t id arg ty curry,
-  Typed [] x t ->
-  ~TermContainsTerm (TmPack id arg ty curry) t.
-Proof.
-  intros x t id arg ty curry Ht C. generalize dependent id.
-  generalize dependent arg. generalize dependent ty. generalize dependent curry.
-  remember [] as ctx eqn:Ectx. induction Ht; intros; simpl in *.
-  - discriminate Ectx.
-  - invert C.
-  - invert C. apply IHHt in H1; [assumption |]. reflexivity.
-  - invert C. apply IHHt in H0; [assumption |].
-Qed.
-
-Theorem no_type_has_pack : ~exists x t id arg ty curry, TermContains (TmPack id arg ty curry) t /\ Typed [] x t.
-Proof.
-  intros [x [t [id [arg [ty [curry [Hc Ht]]]]]]].
-  (*
-  generalize dependent x. induction Hc; intros; simpl in *; subst.
-  - invert Ht. { destruct ctxa; destruct ctxb; try discriminate H1. clear H1. invert H.
-  *)
-  generalize dependent id. generalize dependent arg. generalize dependent ty.
-  generalize dependent curry. remember [] as ctx eqn:Ectx.
-  induction Ht; intros; simpl in *; invert Ectx.
-  - invert Hc.
-  - eapply IHHt; [assumption |]. invert Hc; try apply H2.
-Qed.

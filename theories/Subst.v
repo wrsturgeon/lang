@@ -1,3 +1,6 @@
+From Coq Require Import
+  Lists.List.
+Import ListNotations.
 From Adam Require Import
   Invert
   Terms.
@@ -11,192 +14,6 @@ Definition rmap : forall {A B}, (A -> B) -> resource A -> resource B := fun _ _ 
   | Unused => Unused
   | Used x => Used (f x)
   end.
-
-(* Resource-aware substitution: substitute exactly once. *)
-(* TODO: Prove the above. *)
-Fixpoint subst pre post t :=
-  match t with
-  | TmVoid | TmStar _ | TmAtom _ _ => Unused
-  | TmVarS id => if eqb pre id then Used post else Unused
-  | TmPack id None ty curry =>
-      match subst pre post ty with
-      | Unused => rmap (TmPack id None ty) (subst pre post curry)
-      | Used ty' => Used (TmPack id None ty' curry)
-      end
-  | TmPack id (Some arg) ty curry => if eqb pre arg then Unused else
-      match subst pre post ty with
-      | Unused => rmap (TmPack id (Some arg) ty) (subst pre post curry)
-      | Used ty' => Used (TmPack id (Some arg) ty' curry)
-      end
-  | TmForA None ty body =>
-      match subst pre post ty with
-      | Unused => rmap (TmForA None ty) (subst pre post body)
-      | Used ty' => Used (TmForA None ty' body)
-      end
-  | TmForA (Some arg) ty body => if eqb pre arg then Unused else
-      match subst pre post ty with
-      | Unused => rmap (TmForA (Some arg) ty) (subst pre post body)
-      | Used ty' => Used (TmForA (Some arg) ty' body)
-      end
-  | TmAppl f x =>
-      match subst pre post f with
-      | Unused => rmap (TmAppl f) (subst pre post x)
-      | Used f' => Used (TmAppl f' x)
-      end
-  end.
-Inductive Subst (pre : string) (post : term) : term -> resource term -> Prop :=
-  | SubstVoid :
-      Subst pre post TmVoid Unused
-  | SubstStar : forall lvl,
-      Subst pre post (TmStar lvl) Unused
-  | SubstVarE :
-      Subst pre post (TmVarS pre) (Used post)
-  | SubstVarD : forall id,
-      pre <> id ->
-      Subst pre post (TmVarS id) Unused
-  | SubstAtom : forall id lvl,
-      Subst pre post (TmAtom id lvl) Unused
-  | SubstPackAlias : forall id ty curry,
-      Subst pre post (TmPack id (Some pre) ty curry) Unused
-  | SubstPackNoneL : forall id ty ty' curry,
-      Subst pre post ty (Used ty') ->
-      Subst pre post (TmPack id None ty curry) (Used (TmPack id None ty' curry))
-  | SubstPackNoneR : forall id ty curry curry',
-      Subst pre post ty Unused ->
-      Subst pre post curry (Used curry') ->
-      Subst pre post (TmPack id None ty curry) (Used (TmPack id None ty curry'))
-  | SubstPackNoneA : forall id ty curry,
-      Subst pre post ty Unused ->
-      Subst pre post curry Unused ->
-      Subst pre post (TmPack id None ty curry) Unused
-  | SubstPackSomeL : forall id arg ty ty' curry,
-      pre <> arg ->
-      Subst pre post ty (Used ty') ->
-      Subst pre post (TmPack id (Some arg) ty curry) (Used (TmPack id (Some arg) ty' curry))
-  | SubstPackSomeR : forall id arg ty curry curry',
-      pre <> arg ->
-      Subst pre post ty Unused ->
-      Subst pre post curry (Used curry') ->
-      Subst pre post (TmPack id (Some arg) ty curry) (Used (TmPack id (Some arg) ty curry'))
-  | SubstPackSomeA : forall id arg ty curry,
-      pre <> arg ->
-      Subst pre post ty Unused ->
-      Subst pre post curry Unused ->
-      Subst pre post (TmPack id (Some arg) ty curry) Unused
-  | SubstForAAlias : forall ty body,
-      Subst pre post (TmForA (Some pre) ty body) Unused
-  | SubstForANoneL : forall ty ty' body,
-      Subst pre post ty (Used ty') ->
-      Subst pre post (TmForA None ty body) (Used (TmForA None ty' body))
-  | SubstForANoneR : forall ty body body',
-      Subst pre post ty Unused ->
-      Subst pre post body (Used body') ->
-      Subst pre post (TmForA None ty body) (Used (TmForA None ty body'))
-  | SubstForANoneA : forall ty body,
-      Subst pre post ty Unused ->
-      Subst pre post body Unused ->
-      Subst pre post (TmForA None ty body) Unused
-  | SubstForASomeL : forall arg ty ty' body,
-      pre <> arg ->
-      Subst pre post ty (Used ty') ->
-      Subst pre post (TmForA (Some arg) ty body) (Used (TmForA (Some arg) ty' body))
-  | SubstForASomeR : forall arg ty body body',
-      pre <> arg ->
-      Subst pre post ty Unused ->
-      Subst pre post body (Used body') ->
-      Subst pre post (TmForA (Some arg) ty body) (Used (TmForA (Some arg) ty body'))
-  | SubstForASomeA : forall arg ty body,
-      pre <> arg ->
-      Subst pre post ty Unused ->
-      Subst pre post body Unused ->
-      Subst pre post (TmForA (Some arg) ty body) Unused
-  | SubstApplL : forall f f' x,
-      Subst pre post f (Used f') ->
-      Subst pre post (TmAppl f x) (Used (TmAppl f' x))
-  | SubstApplR : forall f x x',
-      Subst pre post f Unused ->
-      Subst pre post x (Used x') ->
-      Subst pre post (TmAppl f x) (Used (TmAppl f x'))
-  | SubstApplA : forall f x,
-      Subst pre post f Unused ->
-      Subst pre post x Unused ->
-      Subst pre post (TmAppl f x) Unused
-  .
-Lemma subst_available_iff_never_used : forall pre post t,
-  Subst pre post t Unused <-> forall t', ~Subst pre post t (Used t').
-Proof.
-  split; intros.
-  - intro C. generalize dependent t'. remember Unused as r eqn:E.
-    induction H; intros; simpl in *; invert E; invert C; try contradiction;
-    try solve [apply (IHSubst1 eq_refl ty'); assumption];
-    try solve [apply (IHSubst2 eq_refl curry'); assumption];
-    try solve [apply (IHSubst2 eq_refl body'); assumption];
-    try solve [apply (IHSubst1 eq_refl f'); assumption];
-    try solve [apply (IHSubst2 eq_refl x'); assumption].
-  - generalize dependent pre. generalize dependent post.
-    induction t; intros; simpl in *; try constructor.
-    + intros C. subst. contradiction (H post). constructor.
-    + destruct arg.
-      * destruct (eqb pre s) eqn:E. { rewrite eqb_eq in E. subst. constructor. }
-        rewrite eqb_neq in E. constructor; [assumption | apply IHt1 | apply IHt2];
-        intros t' C; eapply H. { apply SubstPackSomeL; [assumption | apply C]. }
-        apply SubstPackSomeR; [assumption | | apply C].
-        apply IHt1. intros t'' C'. eapply H. apply SubstPackSomeL. { assumption. } apply C'.
-      * constructor; [apply IHt1 | apply IHt2]; intros t' C; eapply H. { apply SubstPackNoneL. apply C. }
-        apply SubstPackNoneR; [| apply C]. apply IHt1. intros t'' C'. eapply H. apply SubstPackNoneL. apply C'.
-    + destruct arg.
-      * destruct (eqb pre s) eqn:E. { rewrite eqb_eq in E. subst. constructor. }
-        rewrite eqb_neq in E. constructor; [assumption | apply IHt1 | apply IHt2];
-        intros t' C; eapply H. { apply SubstForASomeL; [assumption | apply C]. }
-        apply SubstForASomeR; [assumption | | apply C].
-        apply IHt1. intros t'' C'. eapply H. apply SubstForASomeL. { assumption. } apply C'.
-      * constructor; [apply IHt1 | apply IHt2]; intros t' C; eapply H. { apply SubstForANoneL. apply C. }
-        apply SubstForANoneR; [| apply C]. apply IHt1. intros t'' C'. eapply H. apply SubstForANoneL. apply C'.
-    + apply IHt1. intros t' C. eapply H. constructor. apply C.
-    + apply IHt2. intros t' C. eapply H. apply SubstApplR; [| apply C].
-      apply IHt1. intros t'' C'. eapply H. constructor. apply C'.
-Qed.
-Theorem reflect_subst : forall pre post t r,
-  subst pre post t = r <-> Subst pre post t r.
-Proof.
-  split; intros.
-  - generalize dependent pre. generalize dependent post. generalize dependent r.
-    induction t; intros; simpl in *; subst;
-    try constructor; try apply IHt1; try apply IHt2; try reflexivity.
-    + destruct (eqb pre id) eqn:E.
-      * rewrite eqb_eq in E. subst. constructor.
-      * rewrite eqb_neq in E. constructor. assumption.
-    + destruct arg.
-      * destruct (eqb pre s) eqn:E.
-        -- rewrite eqb_eq in E. subst. constructor.
-        -- rewrite eqb_neq in E.
-           destruct (subst pre post t1) eqn:E1; apply IHt1 in E1;
-           destruct (subst pre post t2) eqn:E2; apply IHt2 in E2;
-           constructor; assumption.
-      * destruct (subst pre post t1) eqn:E1; apply IHt1 in E1;
-        destruct (subst pre post t2) eqn:E2; apply IHt2 in E2;
-        constructor; assumption.
-    + destruct arg.
-      * destruct (eqb pre s) eqn:E.
-        -- rewrite eqb_eq in E. subst. constructor.
-        -- rewrite eqb_neq in E.
-           destruct (subst pre post t1) eqn:E1; apply IHt1 in E1;
-           destruct (subst pre post t2) eqn:E2; apply IHt2 in E2;
-           constructor; assumption.
-      * destruct (subst pre post t1) eqn:E1; apply IHt1 in E1;
-        destruct (subst pre post t2) eqn:E2; apply IHt2 in E2;
-        constructor; assumption.
-    + destruct (subst pre post t1) eqn:E1; apply IHt1 in E1;
-      destruct (subst pre post t2) eqn:E2; apply IHt2 in E2;
-      constructor; assumption.
-  - induction H; simpl in *; subst; try rewrite eqb_refl;
-    try destruct (eqb pre arg) eqn:E;
-    try rewrite eqb_eq in E; subst; try (contradiction H; reflexivity);
-    try apply eqb_neq in H; try rewrite H; try rewrite IHSubst;
-    try rewrite IHSubst1; try rewrite IHSubst2; try reflexivity.
-Qed.
-
-(* TODO: Prove semantics are invariant to variable name changes! I'm not entirely sure `subst` is right. *)
 
 Fixpoint count_free_slow x t :=
   match t with
@@ -314,34 +131,203 @@ Theorem reflect_count_free : forall x t n,
   count_free x t = n <-> CountFree x t n.
 Proof. intros. apply reflect_count_free_fast. Qed.
 
-Theorem subst_iff_at_least_one : forall pre post t,
-  count_free pre t = 0 <-> subst pre post t = Unused.
+(* Resource-aware substitution: substitute exactly once. *)
+Fixpoint subst pre post t :=
+  match t with
+  | TmVoid | TmStar _ | TmAtom _ _ => Unused
+  | TmVarS id => if eqb pre id then Used post else Unused
+  | TmPack id None ty curry =>
+      match subst pre post ty with
+      | Unused => rmap (TmPack id None ty) (subst pre post curry)
+      | Used ty' => Used (TmPack id None ty' curry)
+      end
+  | TmPack id (Some arg) ty curry => if eqb pre arg then Unused else
+      match subst pre post ty with
+      | Unused => rmap (TmPack id (Some arg) ty) (subst pre post curry)
+      | Used ty' => Used (TmPack id (Some arg) ty' curry)
+      end
+  | TmForA None ty body =>
+      match subst pre post ty with
+      | Unused => rmap (TmForA None ty) (subst pre post body)
+      | Used ty' => Used (TmForA None ty' body)
+      end
+  | TmForA (Some arg) ty body => if eqb pre arg then Unused else
+      match subst pre post ty with
+      | Unused => rmap (TmForA (Some arg) ty) (subst pre post body)
+      | Used ty' => Used (TmForA (Some arg) ty' body)
+      end
+  | TmAppl f x =>
+      match subst pre post f with
+      | Unused => rmap (TmAppl f) (subst pre post x)
+      | Used f' => Used (TmAppl f' x)
+      end
+  end.
+Inductive Subst (pre : string) (post : term) : term -> term -> Prop :=
+  | SubstVarE :
+      Subst pre post (TmVarS pre) post
+  | SubstPackNoneL : forall id ty ty' curry,
+      Subst pre post ty ty' ->
+      Subst pre post (TmPack id None ty curry) (TmPack id None ty' curry)
+  | SubstPackNoneR : forall id ty curry curry',
+      CountFree pre ty 0 ->
+      Subst pre post curry curry' ->
+      Subst pre post (TmPack id None ty curry) (TmPack id None ty curry')
+  | SubstPackSomeL : forall id arg ty ty' curry,
+      pre <> arg ->
+      Subst pre post ty ty' ->
+      Subst pre post (TmPack id (Some arg) ty curry) (TmPack id (Some arg) ty' curry)
+  | SubstPackSomeR : forall id arg ty curry curry',
+      pre <> arg ->
+      CountFree pre ty 0 ->
+      Subst pre post curry curry' ->
+      Subst pre post (TmPack id (Some arg) ty curry) (TmPack id (Some arg) ty curry')
+  | SubstForANoneL : forall ty ty' body,
+      Subst pre post ty ty' ->
+      Subst pre post (TmForA None ty body) (TmForA None ty' body)
+  | SubstForANoneR : forall ty body body',
+      CountFree pre ty 0 ->
+      Subst pre post body body' ->
+      Subst pre post (TmForA None ty body) (TmForA None ty body')
+  | SubstForASomeL : forall arg ty ty' body,
+      pre <> arg ->
+      Subst pre post ty ty' ->
+      Subst pre post (TmForA (Some arg) ty body) (TmForA (Some arg) ty' body)
+  | SubstForASomeR : forall arg ty body body',
+      pre <> arg ->
+      CountFree pre ty 0 ->
+      Subst pre post body body' ->
+      Subst pre post (TmForA (Some arg) ty body) (TmForA (Some arg) ty body')
+  | SubstApplL : forall f f' x,
+      Subst pre post f f' ->
+      Subst pre post (TmAppl f x) (TmAppl f' x)
+  | SubstApplR : forall f x x',
+      CountFree pre f 0 ->
+      Subst pre post x x' ->
+      Subst pre post (TmAppl f x) (TmAppl f x')
+  .
+(*
+Lemma subst_available_iff_never_used : forall pre post t,
+  Subst pre post t Unused <-> forall t', ~Subst pre post t (Used t').
 Proof.
-  intros. rewrite reflect_count_free. rewrite reflect_subst. split; intros.
-  - remember 0 as n eqn:En. induction H; intros; simpl in *; invert En; constructor;
-    try destruct a; try destruct b; try discriminate H1; try discriminate H2;
-    try apply IHCountFree1; try apply IHCountFree2; assumption.
-  - remember Unused as r eqn:Er. induction H; invert Er; simpl in *; econstructor;
-    try assumption; try apply IHSubst1; try apply IHSubst2; reflexivity.
+  split; intros.
+  - intro C. generalize dependent t'. remember Unused as r eqn:E.
+    induction H; intros; simpl in *; invert E; invert C; try contradiction;
+    try solve [apply (IHSubst1 eq_refl ty'); assumption];
+    try solve [apply (IHSubst2 eq_refl curry'); assumption];
+    try solve [apply (IHSubst2 eq_refl body'); assumption];
+    try solve [apply (IHSubst1 eq_refl f'); assumption];
+    try solve [apply (IHSubst2 eq_refl x'); assumption].
+  - generalize dependent pre. generalize dependent post.
+    induction t; intros; simpl in *; try constructor.
+    + intros C. subst. contradiction (H post). constructor.
+    + destruct arg.
+      * destruct (eqb pre s) eqn:E. { rewrite eqb_eq in E. subst. constructor. }
+        rewrite eqb_neq in E. constructor; [assumption | apply IHt1 | apply IHt2];
+        intros t' C; eapply H. { apply SubstPackSomeL; [assumption | apply C]. }
+        apply SubstPackSomeR; [assumption | | apply C].
+        apply IHt1. intros t'' C'. eapply H. apply SubstPackSomeL. { assumption. } apply C'.
+      * constructor; [apply IHt1 | apply IHt2]; intros t' C; eapply H. { apply SubstPackNoneL. apply C. }
+        apply SubstPackNoneR; [| apply C]. apply IHt1. intros t'' C'. eapply H. apply SubstPackNoneL. apply C'.
+    + destruct arg.
+      * destruct (eqb pre s) eqn:E. { rewrite eqb_eq in E. subst. constructor. }
+        rewrite eqb_neq in E. constructor; [assumption | apply IHt1 | apply IHt2];
+        intros t' C; eapply H. { apply SubstForASomeL; [assumption | apply C]. }
+        apply SubstForASomeR; [assumption | | apply C].
+        apply IHt1. intros t'' C'. eapply H. apply SubstForASomeL. { assumption. } apply C'.
+      * constructor; [apply IHt1 | apply IHt2]; intros t' C; eapply H. { apply SubstForANoneL. apply C. }
+        apply SubstForANoneR; [| apply C]. apply IHt1. intros t'' C'. eapply H. apply SubstForANoneL. apply C'.
+    + apply IHt1. intros t' C. eapply H. constructor. apply C.
+    + apply IHt2. intros t' C. eapply H. apply SubstApplR; [| apply C].
+      apply IHt1. intros t'' C'. eapply H. constructor. apply C'.
 Qed.
+*)
+
+Theorem subst_iff_count_nonzero_prop : forall pre post t,
+  count_free pre t = 0 <-> forall t', ~Subst pre post t t'.
+Proof.
+  split; intros.
+  - intro C. induction C; simpl in *; [rewrite eqb_refl in H; discriminate H | | | | | | | | | |];
+    rewrite count_free_fast_acc_sum in *;
+    try destruct (count_free_fast 0 pre f);
+    try destruct (count_free_fast 0 pre x);
+    try destruct (count_free_fast 0 pre ty);
+    try destruct (count_free_fast 0 pre body);
+    try destruct (count_free_fast 0 pre curry);
+    try (apply eqb_neq in H0; rewrite H0 in * );
+    try discriminate H; try apply (IHC eq_refl).
+  - generalize dependent pre. generalize dependent post. induction t; intros; simpl in *; try reflexivity;
+    try rewrite count_free_fast_acc_sum; try destruct arg;
+    try destruct (eqb pre s) eqn:Es; try apply eqb_neq in Es;
+    try erewrite IHt1; try erewrite IHt2; try reflexivity; try intros t' C; try eapply H;
+    try solve [constructor; try assumption; apply C];
+    try (apply SubstPackSomeR; [assumption | | apply C]);
+    try (apply SubstPackNoneR; [| apply C]);
+    try (apply SubstForASomeR; [assumption | | apply C]);
+    try (apply SubstForANoneR; [| apply C]);
+    try (apply SubstApplR; [| apply C]);
+    try apply reflect_count_free; try eapply IHt1; try eapply IHt2; try intros t'' C'; try eapply H;
+    try (constructor; try assumption; apply C').
+    destruct (eqb pre id) eqn:E; [| reflexivity]. apply eqb_eq in E. subst. contradiction (H post). constructor.
+Qed.
+
+Theorem reflect_not_subst : forall pre post t,
+  subst pre post t = Unused <-> forall t', ~Subst pre post t t'.
+Proof.
+  split; intros.
+  - intro C. generalize dependent H. induction C; intros; simpl in *;
+    try rewrite eqb_refl in *; try apply eqb_neq in H; try rewrite H in *;
+    try destruct (subst pre post ty); try destruct (subst pre post curry);
+    try destruct (subst pre post body); try destruct (subst pre post f); try destruct (subst pre post x);
+    try apply (IHC eq_refl); try discriminate.
+  - generalize dependent pre. generalize dependent post. induction t; intros; simpl in *; try reflexivity;
+    [destruct (eqb pre id) eqn:Ei; [| reflexivity]; apply eqb_eq in Ei; subst;
+      contradiction (H post); constructor | | |];
+    try (destruct arg; [destruct (eqb pre s) eqn:Es; [reflexivity |]; apply eqb_neq in Es |]);
+    (destruct (subst pre post t1) eqn:E1; [|
+      rewrite IHt1 in E1; [discriminate E1 |]; intros t' C; eapply H; constructor; try assumption; apply C]);
+    destruct (subst pre post t2) eqn:E2; try reflexivity; simpl in *;
+    (rewrite IHt2 in E2; [discriminate E2 |]); intros t' C; eapply H;
+    try apply SubstPackSomeR; try apply SubstPackNoneR;
+    try apply SubstForASomeR; try apply SubstForANoneR;
+    try apply SubstApplR; try assumption; try apply C;
+    apply reflect_count_free; apply subst_iff_count_nonzero_prop in H;
+    simpl in *; try (apply eqb_neq in Es; rewrite Es in H);
+    rewrite count_free_fast_acc_sum in H; (destruct (count_free_fast 0 pre t1); [reflexivity | discriminate H]).
+Qed.
+
+Theorem subst_iff_count_nonzero : forall pre post t,
+  count_free pre t = 0 <-> subst pre post t = Unused.
+Proof. intros. rewrite reflect_not_subst. apply subst_iff_count_nonzero_prop. Qed.
+
+Theorem reflect_subst : forall pre post t t',
+  subst pre post t = Used t' <-> Subst pre post t t'.
+Proof.
+  split; intros.
+  - generalize dependent pre. generalize dependent post. generalize dependent t'.
+    induction t; intros; simpl in *; subst; invert H;
+    [destruct (eqb pre id) eqn:E; [| discriminate]; rewrite eqb_eq in E; invert H1; constructor | | |];
+    try (destruct arg; [destruct (eqb pre s) eqn:E; [discriminate H1 |]; rewrite eqb_neq in E |]);
+    destruct (subst pre post t1) eqn:E1; try apply IHt1 in E1;
+    destruct (subst pre post t2) eqn:E2; try apply IHt2 in E2;
+    simpl in *; invert H1; constructor; try assumption;
+    apply reflect_count_free; eapply subst_iff_count_nonzero; apply E1.
+  - induction H; simpl in *; try rewrite eqb_refl; try rewrite <- eqb_neq in *; try rewrite IHSubst;
+    try rewrite <- reflect_count_free in *; try erewrite subst_iff_count_nonzero in *;
+    try rewrite H; try rewrite H0; reflexivity.
+Qed.
+
+(* TODO: Prove semantics are invariant to variable name changes! I'm not entirely sure `subst` is right. *)
 
 (* Crucial theorem! *)
 Theorem subst_exactly_once : forall pre post t t',
+  count_free pre post = 0 ->
   subst pre post t = Used t' ->
   count_free pre t = S (count_free pre t').
 Proof.
-  intros pre post t. generalize dependent pre. generalize dependent post.
-  induction t; intros; try discriminate H.
-  - simpl in *. destruct (eqb pre id). invert H1.
-
-  intros. rewrite reflect_subst in H. remember (Used t') as r eqn:Er. generalize dependent t'.
-  induction H; intros; simpl in *; try discriminate Er.
-
-  intros. remember (count_free pre t') as n eqn:En. symmetry in En.
-  rewrite reflect_subst in H. repeat rewrite reflect_count_free in *.
-  generalize dependent n. remember (Used t') as r eqn:Er.
-  induction H; intros; simpl in *; try discriminate Er.
-  - invert Er. constructor.
+  intros pre post t t' Hc Hs. repeat rewrite <- count_free_eq in *. apply reflect_subst in Hs.
+  induction Hs; simpl in *; try rewrite Hc; try rewrite IHHs;
+  try rewrite eqb_refl in *; try rewrite Nat.add_succ_r in *;
+  try rewrite <- eqb_neq in *; try rewrite H; reflexivity.
 Qed.
 
 (*
