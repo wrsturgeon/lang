@@ -18,6 +18,7 @@
       in {
         packages.default = pkgs.mkCoqDerivation {
           inherit pname version owner src;
+          buildInputs = with os-pkgs; [ ocaml ];
           # propagatedBuildInputs = flakes [ array ];
         };
       });

@@ -9,6 +9,7 @@
 **/.DS_Store
 **/.filestoinstall
 **/_CoqProject
+**/extracted/
 **/Makefile.coq
 **/Makefile.coq.conf
 **/result
