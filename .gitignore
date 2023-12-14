@@ -1,0 +1,14 @@
+**/*.aux
+**/*.d
+**/*.glob
+**/*.swp
+**/*.vo
+**/*.vok
+**/*.vos
+**/.direnv/
+**/.DS_Store
+**/.filestoinstall
+**/_CoqProject
+**/Makefile.coq
+**/Makefile.coq.conf
+**/result
