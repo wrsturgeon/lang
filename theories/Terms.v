@@ -1,6 +1,8 @@
 From Coq Require Export
   Strings.String.
 Export PeanoNat.
+From Adam Require Import
+  Invert.
 
 (* What are atoms?
  * Atoms are trivial, user-created terms whose types are themselves.
@@ -96,6 +98,29 @@ Inductive AtomId id : term -> Prop :=
       AtomId id curry ->
       AtomId id (TmPack id arg ty curry)
   .
+Fixpoint atom_id a :=
+  match a with
+  | TmAtom id _ => Some id
+  | TmPack id _ _ curry =>
+      match atom_id curry with
+      | None => None
+      | Some c => if eqb id c then Some id else None
+      end
+  | _ => None
+  end.
+Theorem reflect_atom_id : forall a id,
+  atom_id a = Some id <-> AtomId id a.
+Proof.
+  split; intros.
+  - induction a; try discriminate H; simpl in *. { invert H. constructor. }
+    destruct (atom_id a2); [| discriminate H].
+    destruct (eqb id0 s) eqn:E; [| discriminate H].
+    invert H. constructor. apply IHa2. apply eqb_eq in E. subst. reflexivity.
+  - induction H. { reflexivity. } simpl. rewrite IHAtomId. rewrite eqb_refl. reflexivity.
+Qed.
+Theorem reflect_not_atom_id : forall a,
+  atom_id a = None -> forall id, ~AtomId id a.
+Proof. intros. intro C. apply reflect_atom_id in C. rewrite H in C. discriminate C. Qed. (* TODO: <- *)
 
 Definition eq_opt := fun lhs rhs =>
   match lhs, rhs with

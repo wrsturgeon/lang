@@ -47,10 +47,14 @@ Inductive Typed : context -> term -> term -> Prop :=
       Typed [(id, t)] (TmVarS id) t
   | TyAtom : forall id lvl,
       Typed [] (TmAtom id lvl) (TmAtom id (S lvl))
-  | TyPack : forall ctx id arg ty curry t,
+  | TyPackNone : forall ctx id ty curry t,
       Typed ctx curry t ->
       AtomId id curry ->
-      Typed ctx (TmPack id arg ty curry) (TmForA arg ty t)
+      Typed ctx (TmPack id None ty curry) (TmForA None ty t)
+  | TyPackSome : forall ctx id arg ty curry t,
+      Typed ((arg, ty) :: ctx) curry t ->
+      AtomId id curry ->
+      Typed ctx (TmPack id (Some arg) ty curry) (TmForA (Some arg) ty t)
   | TyForASome : forall ctx arg ty body t,
       Typed ((arg, ty) :: ctx) body t ->
       Typed ctx (TmForA (Some arg) ty body) (TmForA (Some arg) ty t)
