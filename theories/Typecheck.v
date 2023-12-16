@@ -52,9 +52,12 @@ Proof.
 Qed.
 *)
 
+(* Semantics:
+ * `None` means never typable, no matter the context;
+ * `Some (ty, ctx)` means typed with `ctx` left over *)
 Fixpoint typecheck (ctx : context) (t : term) : option (term * context) :=
   match t with
-  | TmVarS x => match ctx with [] => None | (s, t) :: tl => if eqb x s then Some (t, tl) else None end
+  | TmVarS x => match ctx with [] => None | (s, ty) :: tl => if eqb x s then Some (ty, tl) else None end
   | TmAtom id lvl => Some (TmAtom id (S lvl), ctx)
   (* | TmAtom id lvl => match ctx with [] => Some (TmAtom id (S lvl), ctx) | _ :: _ => None end *)
   | TmPack id arg ty curry =>
@@ -64,8 +67,8 @@ Fixpoint typecheck (ctx : context) (t : term) : option (term * context) :=
       | Some aid =>
           if eqb id aid then
             match typecheck ectx curry with
-            | None => None
             | Some (ct, etc) => Some (TmForA arg ty ct, etc)
+            | _ => None
             end
           else None
       end
@@ -159,98 +162,94 @@ Proof.
     destruct H. subst. constructor. apply IHpre. exists x. reflexivity.
 Qed.
 
-(* NOTE: THIS WILL EVENTUALLY NOT HOLD (when `Typed` is not unique)! *)
-Theorem typed_implies_typecheck : forall ctx t ty,
-  Typed ctx t ty ->
-  typecheck ctx t = Some (ty, []).
-Proof.
-  intros. induction H.
-  - simpl. rewrite eqb_refl. reflexivity.
-  - reflexivity.
-  - simpl. apply reflect_atom_id in H0. rewrite H0. rewrite eqb_refl. rewrite IHTyped. reflexivity.
-  - simpl. apply reflect_atom_id in H0. rewrite H0. rewrite eqb_refl. rewrite IHTyped. reflexivity.
-  - simpl. rewrite IHTyped. reflexivity.
-  - simpl. rewrite IHTyped. reflexivity.
-  - simpl. subst. eapply typecheck_weakening in IHTyped1. rewrite IHTyped1.
-    simpl in *. rewrite IHTyped2. rewrite eq_term_refl. reflexivity.
-  - simpl. subst. eapply typecheck_weakening in IHTyped1. rewrite IHTyped1.
-    simpl in *. rewrite IHTyped2. rewrite eq_term_refl.
-    apply reflect_subst in H2. rewrite H2. reflexivity.
-Qed.
+(* Note that we can't say `typecheck ctx t <> Some (ty, []) -> ~Typed ctx t ty`,
+ * since the typing relation may not be unique: `typecheck` chooses only one type.
+ * We also can't say `~Typed ctx t ty -> typecheck ctx t = None`,
+ * since some term may be typable with some context left over. *)
+Definition TypecheckCorrectOn : term -> Prop := fun t => forall ctx,
+  (typecheck ctx t = None -> ~exists ty, Typed ctx t ty) /\ forall ty,
+  (typecheck ctx t = Some (ty, []) -> Typed ctx t ty) /\
+  (Typed ctx t ty -> exists ty', typecheck ctx t = Some (ty', [])) /\
+  (~Typed ctx t ty -> typecheck ctx t <> Some (ty, [])).
+Arguments TypecheckCorrectOn t/.
+Ltac tcintros := repeat split; intros; try intros [ty C]; try intro C; try discriminate.
 
-Theorem typed_unique : forall ctx t ty1 ty2,
-  Typed ctx t ty1 ->
-  Typed ctx t ty2 ->
-  ty1 = ty2.
-Proof.
-  intros. apply typed_implies_typecheck in H. apply typed_implies_typecheck in H0.
-  rewrite H0 in H. invert H. reflexivity.
-Qed.
+Lemma typecheck_correct_void : TypecheckCorrectOn TmVoid.
+Proof. tcintros. { invert C. } invert H. Qed.
 
-(*
-Theorem typecheck_preserves_scope : forall ctx t ty ctx',
-  typecheck ctx t = Some (ty, ctx') ->
-  exists used, ctx = used ++ ctx'.
-Proof.
-  intros ctx t. generalize dependent ctx. induction t; intros; try discriminate.
-  - simpl in *. destruct ctx; try discriminate H. destruct p.
-    destruct (eqb id s); invert H. exists [(s, ty)]. reflexivity.
-  - invert H. exists []. reflexivity.
-  - destruct (atom_id t2); try discriminate H.
-    destruct (eqb id s) eqn:Ee; try discriminate H. apply eqb_eq in Ee. subst.
-    destruct arg.
-    + destruct (typecheck ((s0, t1) :: ctx) t2) eqn:Et; try discriminate H. destruct p. invert H.
-      apply IHt2 in Et. destruct Et. destruct x.
-      * simpl in *. invert H. invert H0.
-Qed.
+Lemma typecheck_correct_star : forall lvl, TypecheckCorrectOn (TmStar lvl).
+Proof. tcintros. { invert C. } invert H. Qed.
 
-Theorem typecheck_implies_typed : forall ctx t ty,
-  typecheck ctx t = Some (ty, []) ->
-  Typed ctx t ty.
+Lemma typecheck_correct_vars : forall id, TypecheckCorrectOn (TmVarS id).
 Proof.
-  intros ctx t. generalize dependent ctx. induction t; intros; simpl in *; try discriminate.
-  - destruct ctx; try discriminate H. destruct p.
+  tcintros.
+  - invert C. simpl in H. rewrite eqb_refl in H. discriminate H.
+  - destruct ctx; try discriminate H. destruct p. simpl in *.
     destruct (eqb id s) eqn:E; invert H. apply eqb_eq in E. subst. constructor.
+  - invert H. simpl in *. rewrite eqb_refl. eexists. reflexivity.
+  - destruct ctx; try discriminate C. destruct p. simpl in *.
+    destruct (eqb id s) eqn:E; invert C. apply eqb_eq in E. subst. contradiction H. constructor.
+Qed.
+
+Lemma typecheck_correct_atom : forall id lvl, TypecheckCorrectOn (TmAtom id lvl).
+Proof.
+  tcintros.
   - invert H. constructor.
-  - destruct (atom_id t2) eqn:Ea; try discriminate H. apply reflect_atom_id in Ea.
-    destruct (eqb id s) eqn:E; try discriminate H. apply eqb_eq in E. subst.
-    destruct arg; [destruct (typecheck ((s0, t1) :: ctx) t2) eqn:Et | destruct (typecheck ctx t2) eqn:Et];
-    try discriminate H; destruct p; invert H; apply IHt2 in Et; constructor; assumption.
-  - destruct arg; [destruct (typecheck ((s, t1) :: ctx) t2) eqn:Et | destruct (typecheck ctx t2) eqn:Et];
-    try discriminate H; destruct p; invert H; apply IHt2 in Et; constructor; assumption.
-  - destruct (typecheck ctx t1) eqn:Et1; try discriminate H. destruct p. destruct t; try discriminate H.
-    destruct (typecheck c t2) eqn:Et2; try discriminate H. destruct p.
-    destruct (eq_term t3 t) eqn:Ee; try discriminate H. apply reflect_eq_term in Ee. subst.
-    destruct arg; [destruct (subst s t2 t4) eqn:Es; try discriminate H; apply reflect_subst in Es |]; invert H.
-    + apply IHt2 in Et2. eapply TyApplSome; [| apply Et2 | | apply Es].
+  - invert H. eexists. reflexivity.
+  - invert C. contradiction H. constructor.
 Qed.
 
-(* Extremely crucial theorem! *)
-Theorem typecheck_correct : forall ctx t ty,
-  (exists etc, typecheck ctx t = Some (ty, etc)) <-> Typed ctx t ty.
+Lemma typecheck_correct_pack : forall id arg t curry,
+  TypecheckCorrectOn curry ->
+  TypecheckCorrectOn (TmPack id arg t curry).
 Proof.
-  split; intros.
-  - admit.
-  - induction H; intros; try reflexivity.
-    + simpl. rewrite eqb_refl. exists []. reflexivity.
-    + exists []. reflexivity.
-    + simpl.
-
-    + simpl. rewrite eqb_refl. reflexivity.
-    + simpl. apply reflect_atom_id in H0. rewrite H0. rewrite eqb_refl. rewrite IHTyped. reflexivity.
-    + simpl. apply reflect_atom_id in H0. rewrite H0. rewrite eqb_refl. rewrite IHTyped. reflexivity.
-    + simpl. rewrite IHTyped. reflexivity.
-    + simpl. rewrite IHTyped. reflexivity.
-    + simpl in *. generalize dependent body. generalize dependent ctx. generalize dependent f.
-      generalize dependent x. generalize dependent ty. generalize dependent ctxb. induction ctxa.
-      * intros. destruct ctxb; subst; simpl;
-        rewrite IHTyped1; rewrite IHTyped2; rewrite eq_term_refl; reflexivity.
-      * intros. subst. simpl in *. specialize (IHctxa ctxb ty x H0 IHTyped2). clear IHctxa.
+  tcintros.
+  - simpl in H0. invert C; apply reflect_atom_id in H8; rewrite H8 in H0; rewrite eqb_refl in H0;
+    [destruct (typecheck ctx curry) eqn:Et | destruct (typecheck ((arg0, t) :: ctx) curry) eqn:Et];
+    try destruct p; try discriminate H0; apply H in Et; contradiction Et; eexists; apply H7.
+  - simpl in H0. destruct (atom_id curry) eqn:Ea; try discriminate H0. apply reflect_atom_id in Ea.
+    destruct (eqb id s) eqn:Es; try discriminate H0. apply eqb_eq in Es. subst.
+    destruct arg; [destruct (typecheck ((s0, t) :: ctx) curry) eqn:Et | destruct (typecheck ctx curry) eqn:Et];
+    try discriminate H0; destruct p; invert H0; [specialize (H ((s0, t) :: ctx)) | specialize (H ctx)];
+    destruct H; specialize (H0 t0); destruct H0; apply H0 in Et; constructor; assumption.
+  - invert H0; simpl; apply H in H7; destruct H7; apply reflect_atom_id in H8; rewrite H8;
+    rewrite eqb_refl; rewrite H0; eexists; reflexivity.
+  - simpl in C. destruct (atom_id curry) eqn:Ea; try discriminate C. apply reflect_atom_id in Ea.
+    destruct (eqb id s) eqn:E; try discriminate C. apply eqb_eq in E. subst.
+    destruct arg; [destruct (typecheck ((s0, t) :: ctx) curry) eqn:Et | destruct (typecheck ctx curry) eqn:Et];
+    try destruct p; try discriminate; invert C;
+    [specialize (H ((s0, t) :: ctx)) as [_ H] | specialize (H ctx) as [_ H]];
+    specialize (H t0) as [H _]; apply H in Et; contradiction H0; constructor; assumption.
 Qed.
 
-Theorem reflect_not_typecheck : forall ctx t,
-  typecheck ctx t = None <-> ~exists ty, Typed ctx t ty.
+Lemma typecheck_correct_fora : forall arg t curry,
+  TypecheckCorrectOn curry ->
+  TypecheckCorrectOn (TmForA arg t curry).
 Proof.
-  split; intros.
+  tcintros.
+  - simpl in H0. invert C; apply H in H6; destruct H6 as [ty' H6]; rewrite H6 in H0; discriminate H0.
+  - simpl in H0. destruct arg;
+    [destruct (typecheck ((s, t) :: ctx) curry) eqn:Et | destruct (typecheck ctx curry) eqn:Et];
+    try destruct p; try discriminate; invert H0; constructor;
+    [specialize (H ((s, t) :: ctx)) as [_ H] | specialize (H ctx) as [_ H]];
+    specialize (H t0) as [H _]; apply H in Et; assumption.
+  - invert H0; apply H in H6; destruct H6; simpl; rewrite H0; eexists; reflexivity.
+  - simpl in C. destruct arg;
+    [destruct (typecheck ((s, t) :: ctx) curry) eqn:Et | destruct (typecheck ctx curry) eqn:Et];
+    try destruct p; try discriminate; invert C;
+    [specialize (H ((s, t) :: ctx)) as [_ H] | specialize (H ctx) as [_ H]];
+    specialize (H t0) as [H _]; apply H in Et; contradiction H0; constructor; assumption.
 Qed.
-*)
+
+(* Everything after this requires an induction hypothesis, so let's just dive in *)
+
+Theorem typecheck_correct : forall t, TypecheckCorrectOn t.
+Proof.
+  induction t.
+  - apply typecheck_correct_void.
+  - apply typecheck_correct_star.
+  - apply typecheck_correct_vars.
+  - apply typecheck_correct_atom.
+  - apply typecheck_correct_pack. assumption.
+  - apply typecheck_correct_fora. assumption.
+  - Admitted.
