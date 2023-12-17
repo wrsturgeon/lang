@@ -47,30 +47,38 @@ Inductive Typed : context -> term -> term -> Prop :=
       Typed [(id, t)] (TmVarS id) t
   | TyAtom : forall id lvl,
       Typed [] (TmAtom id lvl) (TmAtom id (S lvl))
-  | TyPackNone : forall ctx id ty curry t,
-      Typed ctx curry t ->
+  | TyPackNone : forall ctx ctxt ctxc id ty curry t kind,
+      Typed ctxt ty kind ->
+      Typed ctxc curry t ->
+      ctx = ctxt ++ ctxc ->
       AtomId id curry ->
       Typed ctx (TmPack id None ty curry) (TmForA None ty t)
-  | TyPackSome : forall ctx id arg ty curry t,
-      Typed ((arg, ty) :: ctx) curry t ->
+  | TyPackSome : forall ctx ctxt ctxc id arg ty curry t kind,
       AtomId id curry ->
+      Typed ctxt ty kind ->
+      Typed ((arg, ty) :: ctxc) curry t ->
+      ctx = ctxt ++ ctxc ->
       Typed ctx (TmPack id (Some arg) ty curry) (TmForA (Some arg) ty t)
-  | TyForASome : forall ctx arg ty body t,
-      Typed ((arg, ty) :: ctx) body t ->
+  | TyForASome : forall ctx ctxt ctxc arg ty body t kind,
+      Typed ctxt ty kind ->
+      Typed ((arg, ty) :: ctxc) body t ->
+      ctx = ctxt ++ ctxc ->
       Typed ctx (TmForA (Some arg) ty body) (TmForA (Some arg) ty t)
     (* TODO: Does this make sense in terms of memory optimization? If we never receive the input? *)
-  | TyForANone : forall ctx ty body t,
-      Typed ctx body t ->
+  | TyForANone : forall ctx ctxt ctxc ty body t kind,
+      Typed ctxt ty kind ->
+      Typed ctxc body t ->
+      ctx = ctxt ++ ctxc ->
       Typed ctx (TmForA None ty body) (TmForA None ty t)
-  | TyApplNone : forall ctx ctxa ctxb f x ty body,
-      Typed ctxa f (TmForA None ty body) ->
-      Typed ctxb x ty ->
-      ctx = ctxa ++ ctxb ->
+  | TyApplNone : forall ctx ctxf ctxx f x ty body,
+      Typed ctxf f (TmForA None ty body) ->
+      Typed ctxx x ty ->
+      ctx = ctxf ++ ctxx ->
       Typed ctx (TmAppl f x) body
-  | TyApplSome : forall ctx ctxa ctxb f x arg ty body sub,
-      Typed ctxa f (TmForA (Some arg) ty body) ->
-      Typed ctxb x ty ->
-      ctx = ctxa ++ ctxb ->
+  | TyApplSome : forall ctx ctxf ctxx f x arg ty body sub,
+      Typed ctxf f (TmForA (Some arg) ty body) ->
+      Typed ctxx x ty ->
+      ctx = ctxf ++ ctxx ->
       Subst arg x body sub ->
       Typed ctx (TmAppl f x) sub
   .
@@ -102,12 +110,12 @@ Example type_prevents_reuse : ~exists t,
 Proof.
   (* In all cases, we have to use the concatenation hypothesis to show that we can't use `x` twice. *)
   intros [t C]. invert C.
-  - invert H3. repeat (destruct ctxa; try discriminate H5). invert H5. invert H1.
-    + invert H4. repeat (destruct ctxa; try discriminate H6).
-    + invert H3. repeat (destruct ctxa; try discriminate H5).
-  - invert H2. repeat (destruct ctxa; try discriminate H4). invert H4. invert H1.
-    + invert H4. repeat (destruct ctxa; try discriminate H7).
-    + invert H3. repeat (destruct ctxa; try discriminate H5).
+  - invert H3. repeat (destruct ctxf; try discriminate H5). invert H5. invert H1.
+    + invert H4. repeat (destruct ctxf; try discriminate H6).
+    + invert H3. repeat (destruct ctxf; try discriminate H5).
+  - invert H2. repeat (destruct ctxf; try discriminate H4). invert H4. invert H1.
+    + invert H4. repeat (destruct ctxf; try discriminate H7).
+    + invert H3. repeat (destruct ctxf; try discriminate H5).
 Qed.
 
 (* ...But the above becomes perfectly okay if we add exchange and contraction, i.e., a heap: *)
