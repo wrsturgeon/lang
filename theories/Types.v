@@ -2,7 +2,7 @@ From Coq Require Export
   Lists.List
   Sorting.Permutation.
 Export ListNotations.
-From Adam Require Import
+From Lang Require Import
   Invert
   Subst
   Terms.
@@ -42,34 +42,23 @@ Inductive WithExchange (P : judgment) : judgment :=
   .
 
 (* Typed extremely strictly, as if on a stack: no exchange, no weakening, no contraction. *)
+Print term.
 Inductive Typed : context -> term -> term -> Prop :=
   | TyVarS : forall id t,
       Typed [(id, t)] (TmVarS id) t
-  | TyAtom : forall id lvl,
-      Typed [] (TmAtom id lvl) (TmAtom id (S lvl))
-  | TyPackNone : forall ctx ctxt ctxc id ty curry t kind,
+  | TyAtom : forall id,
+      Typed [] (TmAtom id) (TmAtom id)
+  | TyPack : forall ctx ctxt ctxc id arg ty curry t kind,
       Typed ctxt ty kind ->
-      Typed ctxc curry t ->
-      ctx = ctxt ++ ctxc ->
+      Typed (match arg with Some x => (x, ty) :: ctxc | None => ctxc end) curry t ->
+      ctxt ++ ctxc = ctx ->
       AtomId id curry ->
-      Typed ctx (TmPack id None ty curry) (TmForA None ty t)
-  | TyPackSome : forall ctx ctxt ctxc id arg ty curry t kind,
-      AtomId id curry ->
+      Typed ctx (TmPack id arg ty curry) (TmForA arg ty t)
+  | TyForA : forall ctx ctxt ctxc arg ty body t kind,
       Typed ctxt ty kind ->
-      Typed ((arg, ty) :: ctxc) curry t ->
-      ctx = ctxt ++ ctxc ->
-      Typed ctx (TmPack id (Some arg) ty curry) (TmForA (Some arg) ty t)
-  | TyForASome : forall ctx ctxt ctxc arg ty body t kind,
-      Typed ctxt ty kind ->
-      Typed ((arg, ty) :: ctxc) body t ->
-      ctx = ctxt ++ ctxc ->
-      Typed ctx (TmForA (Some arg) ty body) (TmForA (Some arg) ty t)
-    (* TODO: Does this make sense in terms of memory optimization? If we never receive the input? *)
-  | TyForANone : forall ctx ctxt ctxc ty body t kind,
-      Typed ctxt ty kind ->
-      Typed ctxc body t ->
-      ctx = ctxt ++ ctxc ->
-      Typed ctx (TmForA None ty body) (TmForA None ty t)
+      Typed (match arg with Some x => (x, ty) :: ctxc | None => ctxc end) body t ->
+      ctxt ++ ctxc = ctx ->
+      Typed ctx (TmForA arg ty body) (TmForA arg ty t)
   | TyApplNone : forall ctx ctxf ctxx f x ty body,
       Typed ctxf f (TmForA None ty body) ->
       Typed ctxx x ty ->
@@ -79,9 +68,14 @@ Inductive Typed : context -> term -> term -> Prop :=
       Typed ctxf f (TmForA (Some arg) ty body) ->
       Typed ctxx x ty ->
       ctx = ctxf ++ ctxx ->
-      Subst arg x body sub ->
+      subst arg x body = Some sub ->
       Typed ctx (TmAppl f x) sub
+  | TyStar : forall ctx t ty,
+      Typed ctx t ty ->
+      Typed ctx t TmStar
   .
+
+(* TODO: CRUCIAL SAFETY THEOREMS: (1) Star does not have type Star, and (2) no term has type Void *)
 
 (* Showing that, given f: X -> Y and x: X, we can type (f x) : Y. *)
 Example type_fn_app :
@@ -148,3 +142,18 @@ Qed.
    greater than or equal to its output type size!
    Dizzying implications in terms of what a program has to start with--TODO: figure this out.
    This might be a crucial lemma in proving type safety (since a void output implies void input)! *)
+
+(* Fantastic that we can prove something this precise! *)
+Theorem typed_requires_fv : forall ctx t ty,
+  Typed ctx t ty -> FreeIn t (map fst ctx).
+Proof.
+  intros. induction H; intros; simpl in *; subst; econstructor;
+  try apply IHTyped1; try apply IHTyped2; rewrite <- map_distr; reflexivity.
+Qed.
+
+Theorem fv_not_typed : forall t,
+  fv t <> [] -> ~exists ty, Typed [] t ty.
+Proof.
+  intros t H [ty C]. apply typed_requires_fv in C. apply reflect_fv in C.
+  rewrite C in H. contradiction H. reflexivity.
+Qed.

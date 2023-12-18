@@ -2,7 +2,7 @@
 
 .PHONY: all call-install clean extract install
 
-PROJNAME:=Adam
+PROJNAME:=Lang
 SRCDIR:=theories
 SOURCES:=$(shell find $(SRCDIR) -name '*.v')
 FLAGS:=-Q $(SRCDIR) $(PROJNAME)

@@ -1,4 +1,4 @@
-From Adam Require Import
+From Lang Require Import
   Terms
   Types.
 

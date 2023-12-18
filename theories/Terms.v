@@ -1,7 +1,7 @@
 From Coq Require Export
   Strings.String.
 Export PeanoNat.
-From Adam Require Import
+From Lang Require Import
   Invert.
 
 (* What are atoms?
@@ -73,11 +73,11 @@ Inductive term : Set :=
     (* Type with no constructors. *)
   | TmVoid
     (* Any term under (STRICTLY under) this universe level. *)
-  | TmStar (lvl : nat)
+  | TmStar
     (* Variable, by name. *)
   | TmVarS (id : string)
     (* Atom with no arguments. *)
-  | TmAtom (id : string) (lvl : nat)
+  | TmAtom (id : string)
     (* Atom with arguments (via currying). *)
   | TmPack (id : string) (arg : option string) (ty : term) (curry : term)
     (* Lambda abstraction, i.e. for-all statement. *)
@@ -93,14 +93,14 @@ then lazily bump them up during analysis in effect only--
 instead, what if we only cared when taking a type argument? *)
 
 Inductive AtomId id : term -> Prop :=
-  | AtomIdAtom : forall lvl, AtomId id (TmAtom id lvl)
+  | AtomIdAtom : AtomId id (TmAtom id)
   | AtomIdPack : forall arg ty curry,
       AtomId id curry ->
       AtomId id (TmPack id arg ty curry)
   .
 Fixpoint atom_id a :=
   match a with
-  | TmAtom id _ => Some id
+  | TmAtom id => Some id
   | TmPack id _ _ curry =>
       match atom_id curry with
       | None => None
@@ -139,10 +139,9 @@ Qed.
 
 Fixpoint eq_term lhs rhs :=
   match lhs, rhs with
-  | TmVoid, TmVoid => true
-  | TmStar a, TmStar b => Nat.eqb a b
+  | TmVoid, TmVoid | TmStar, TmStar => true
   | TmVarS a, TmVarS b => eqb a b
-  | TmAtom idl lvll, TmAtom idr lvlr => andb (eqb idl idr) (Nat.eqb lvll lvlr)
+  | TmAtom idl, TmAtom idr => eqb idl idr
   | TmPack idl argl tyl curryl, TmPack idr argr tyr curryr => andb (andb (andb
       (eqb idl idr)
       (eq_opt argl argr))
@@ -266,113 +265,3 @@ Proof.
     repeat (simpl; rewrite Bool.orb_true_r); try reflexivity.
     apply term_contains_term_refl.
 Qed.
-
-Fixpoint map_levels f t :=
-  match t with
-  | TmVoid => TmVoid
-  | TmStar lvl => TmStar (f lvl)
-  | TmVarS id => TmVarS id
-  | TmAtom id lvl => TmAtom id (f lvl)
-  | TmPack id arg ty curry => TmPack id arg (map_levels f ty) (map_levels f curry)
-  | TmForA id ty body => TmForA id (map_levels f ty) (map_levels f body)
-  | TmAppl g x => TmAppl (map_levels f g) (map_levels f x)
-  end.
-Inductive MapLevels (F : nat -> nat -> Prop) : term -> term -> Prop :=
-  | MapLvlVoid :
-      MapLevels F TmVoid TmVoid
-  | MapLvlStar : forall lvl lvl',
-      F lvl lvl' ->
-      MapLevels F (TmStar lvl) (TmStar lvl')
-  | MapLvlVarS : forall id,
-      MapLevels F (TmVarS id) (TmVarS id)
-  | MapLvlAtom : forall id lvl lvl',
-      F lvl lvl' ->
-      MapLevels F (TmAtom id lvl) (TmAtom id lvl')
-  | MapLvlPack : forall id arg ty ty' curry curry',
-      MapLevels F ty ty' ->
-      MapLevels F curry curry' ->
-      MapLevels F (TmPack id arg ty curry) (TmPack id arg ty' curry')
-  | MapLvlForA : forall id ty ty' body body',
-      MapLevels F ty ty' ->
-      MapLevels F body body' ->
-      MapLevels F (TmForA id ty body) (TmForA id ty' body')
-  | MapLvlAppl : forall g g' x x',
-      MapLevels F g g' ->
-      MapLevels F x x' ->
-      MapLevels F (TmAppl g x) (TmAppl g' x')
-  .
-Theorem reflect_map_levels : forall f F t t',
-  (forall x y, f x = y <-> F x y) ->
-  map_levels f t = t' <-> MapLevels F t t'.
-Proof.
-  split; intros.
-  - generalize dependent f. generalize dependent F. generalize dependent t'.
-    induction t; intros; simpl in *; subst; constructor;
-    try apply (IHt1 _ _ f); try apply (IHt2 _ _ f); try assumption; try reflexivity;
-    apply H; reflexivity.
-  - generalize dependent f. induction H0; intros; simpl in *;
-    try (rewrite IHMapLevels1; [| assumption]); try (rewrite IHMapLevels2; [| assumption]);
-    try reflexivity; f_equal; apply H0; assumption.
-Qed.
-
-(* Left fold. *)
-Fixpoint fold_levels {T} (f : T -> nat -> T) (init : T) t :=
-  match t with
-  | TmVoid | TmVarS _ => init
-  | TmStar lvl | TmAtom _ lvl => f init lvl
-  | TmPack _ _ a b | TmForA _ a b | TmAppl a b => fold_levels f (fold_levels f init a) b
-  end.
-Inductive FoldLevels {T} (F : T -> nat -> T -> Prop) (init : T) : term -> T -> Prop :=
-  | FoldLvlVoid :
-      FoldLevels F init TmVoid init
-  | FoldLvlVarS : forall id,
-      FoldLevels F init (TmVarS id) init
-  | FoldLvlStar : forall lvl lvl',
-      F init lvl lvl' ->
-      FoldLevels F init (TmStar lvl) lvl'
-  | FoldLvlAtom : forall id lvl lvl',
-      F init lvl lvl' ->
-      FoldLevels F init (TmAtom id lvl) lvl'
-  | FoldLvlPack : forall id arg ty curry tmp out,
-      FoldLevels F init ty tmp ->
-      FoldLevels F tmp curry out ->
-      FoldLevels F init (TmPack id arg ty curry) out
-  | FoldLvlForA : forall arg ty body tmp out,
-      FoldLevels F init ty tmp ->
-      FoldLevels F tmp body out ->
-      FoldLevels F init (TmForA arg ty body) out
-  | FoldLvlAppl : forall f x tmp out,
-      FoldLevels F init f tmp ->
-      FoldLevels F tmp x out ->
-      FoldLevels F init (TmAppl f x) out
-  .
-Theorem reflect_fold_levels : forall {T} f F (init : T) t t',
-  (forall a b c, f a b = c <-> F a b c) ->
-  fold_levels f init t = t' <-> FoldLevels F init t t'.
-Proof.
-  split; intros.
-  - generalize dependent T. induction t; intros; simpl in *; subst;
-    econstructor; try eapply IHt1; try eapply IHt2; try apply H; reflexivity.
-  - generalize dependent f. induction H0; intros; simpl in *; subst;
-    try apply H0; try rewrite IHFoldLevels1; try apply IHFoldLevels2; try assumption; reflexivity.
-Qed.
-
-Definition Successor : nat -> nat -> Prop := fun m n => n = S m.
-Arguments Successor m n/.
-Definition Raise : term -> term -> Prop := MapLevels Successor.
-Arguments Raise/ t t'.
-Definition raise : term -> term := map_levels S.
-Arguments raise/ t.
-Theorem reflect_raise : forall t t',
-  raise t = t' <-> Raise t t'.
-Proof. intros. apply reflect_map_levels. unfold Successor. split; intros; symmetry in H; assumption. Qed.
-
-Definition Max : nat -> nat -> nat -> Prop := fun a b c => Nat.max a b = c.
-Arguments Max/ a b c.
-Definition HighestLevel : term -> nat -> Prop := FoldLevels Max O.
-Arguments HighestLevel/ t lvl.
-Definition highest_level : term -> nat := fold_levels Nat.max O.
-Arguments highest_level/ t.
-Theorem reflect_highest_level : forall t lvl,
-  highest_level t = lvl <-> HighestLevel t lvl.
-Proof. intros. apply reflect_fold_levels. unfold Max. reflexivity. Qed.
