@@ -1,7 +1,7 @@
 From Coq Require Import
   Extraction.
 From Lang Require Import
-  Typecheck.
+  Subst.
 
 Extraction Language OCaml.
-Extraction "extracted/Typecheck.ml" typecheck.
+Extraction "extracted/subst.ml" subst.

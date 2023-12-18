@@ -3,6 +3,7 @@ From Coq Require Export
   Sorting.Permutation.
 Export ListNotations.
 From Lang Require Import
+  Closed
   Invert
   Subst
   Terms.
@@ -42,7 +43,6 @@ Inductive WithExchange (P : judgment) : judgment :=
   .
 
 (* Typed extremely strictly, as if on a stack: no exchange, no weakening, no contraction. *)
-Print term.
 Inductive Typed : context -> term -> term -> Prop :=
   | TyVarS : forall id t,
       Typed [(id, t)] (TmVarS id) t
@@ -103,13 +103,16 @@ Example type_prevents_reuse : ~exists t,
   Typed ctx fxx t.
 Proof.
   (* In all cases, we have to use the concatenation hypothesis to show that we can't use `x` twice. *)
-  intros [t C]. invert C.
-  - invert H3. repeat (destruct ctxf; try discriminate H5). invert H5. invert H1.
-    + invert H4. repeat (destruct ctxf; try discriminate H6).
-    + invert H3. repeat (destruct ctxf; try discriminate H5).
-  - invert H2. repeat (destruct ctxf; try discriminate H4). invert H4. invert H1.
-    + invert H4. repeat (destruct ctxf; try discriminate H7).
-    + invert H3. repeat (destruct ctxf; try discriminate H5).
+  intros [t C]. simpl in *.
+  remember [
+    ("f"%string, TmForA None (TmVarS "X") (TmForA None (TmVarS "X") (TmVarS "Y")));
+    ("x"%string, TmVarS "X")] as ctx eqn:Ec. generalize dependent Ec.
+  remember (TmAppl (TmAppl (TmVarS "f") (TmVarS "x")) (TmVarS "x")) as ty eqn:Et. generalize dependent Et.
+  induction C; intros; simpl in *; subst; try discriminate.
+  - invert Et. invert C1; invert H1; invert Ec. destruct ctxx0; invert H3. destruct ctxx; invert H4. invert C2.
+  - invert Et. invert C1; invert H2; invert Ec.
+  - invert C; [| invert H1; invert H3; invert H4 | apply (IHC eq_refl eq_refl)].
+    invert H1; invert H2; invert H5; destruct ctxx0; destruct ctxx; invert H3; invert H6; invert H4.
 Qed.
 
 (* ...But the above becomes perfectly okay if we add exchange and contraction, i.e., a heap: *)
@@ -147,8 +150,8 @@ Qed.
 Theorem typed_requires_fv : forall ctx t ty,
   Typed ctx t ty -> FreeIn t (map fst ctx).
 Proof.
-  intros. induction H; intros; simpl in *; subst; econstructor;
-  try apply IHTyped1; try apply IHTyped2; rewrite <- map_distr; reflexivity.
+  intros. induction H; intros; simpl in *; subst; repeat rewrite map_distr; try assumption;
+  try destruct arg; econstructor; try apply IHTyped1; try apply IHTyped2; reflexivity.
 Qed.
 
 Theorem fv_not_typed : forall t,

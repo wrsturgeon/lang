@@ -4,7 +4,7 @@ ALL_ML:=$(shell find . -name '*.ml')
 ALL_MLI:=$(shell find . -name '*.mli')
 OCAMLOPTFLAGS=$(INCLUDES)
 
-default: Subst.cmx
+default: subst.cmx
 
 %.cmi: %.mli
 	ocamlopt $(OCAMLOPTFLAGS) -c $<
