@@ -44,6 +44,8 @@ Inductive WithExchange (P : judgment) : judgment :=
 
 (* Typed extremely strictly, as if on a stack: no exchange, no weakening, no contraction. *)
 Inductive Typed : context -> term -> term -> Prop :=
+  | TyStar : forall univ,
+      Typed [] (TmStar univ) (TmStar (S univ))
   | TyVarS : forall id t,
       Typed [(id, t)] (TmVarS id) t
   | TyAtom : forall id,
@@ -62,12 +64,13 @@ Inductive Typed : context -> term -> term -> Prop :=
   | TyApplNone : forall ctx ctxf ctxx f x ty body,
       Typed ctxf f (TmForA None ty body) ->
       Typed ctxx x ty ->
-      ctx = ctxf ++ ctxx ->
+      ctxf ++ ctxx = ctx->
       Typed ctx (TmAppl f x) body
+  (* and here's the rule that allows dependent types: *)
   | TyApplSome : forall ctx ctxf ctxx f x arg ty body sub,
       Typed ctxf f (TmForA (Some arg) ty body) ->
       Typed ctxx x ty ->
-      ctx = ctxf ++ ctxx ->
+      ctxf ++ ctxx = ctx ->
       subst arg x body = Some sub ->
       Typed ctx (TmAppl f x) sub
   (*
@@ -77,7 +80,19 @@ Inductive Typed : context -> term -> term -> Prop :=
   *)
   .
 
-(* TODO: CRUCIAL SAFETY THEOREMS: (1) Star does not have type Star, and (2) no term has type Void *)
+(* TODO: CRUCIAL SAFETY THEOREMS: (1) Star n does not have type Star n, and (2) no term has type Void. *)
+
+(* Polymorphic identity function.
+ * `\t: *. \x: t. x` is typable (!), and in fact it has type
+ * `\t: *. \x: t. t`, almost but not quite the same. Could be simplified to
+ * `\t: *. (t -> t)` by making the `x` anonymous. *)
+Definition polymorphic_identity_fn := (TmForA (Some "t") (TmStar 0) (TmForA (Some "x") (TmVarS "t") (TmVarS "x")))%string.
+Definition polymorphic_identity_ty := (TmForA (Some "t") (TmStar 0) (TmForA (Some "x") (TmVarS "t") (TmVarS "t")))%string.
+Theorem dependent_types_woohoo :
+  Typed [] polymorphic_identity_fn polymorphic_identity_ty.
+Proof. repeat econstructor. Qed.
+
+Theorem WAIT_A_SECOND : fv polymorphic_identity_ty = []. Proof. simpl. fail. (* NOT TRUE! *)
 
 (* Showing that, given f: X -> Y and x: X, we can type (f x) : Y. *)
 Example type_fn_app :
@@ -149,7 +164,9 @@ Qed.
    Dizzying implications in terms of what a program has to start with--TODO: figure this out.
    This might be a crucial lemma in proving type safety (since a void output implies void input)! *)
 
-(* Fantastic that we can prove something this precise! *)
+(* If a term `t` is typed in a context, then
+ * that context has EXACTLY `fv t`, in order.
+ * Fantastic that we can prove something this precise! *)
 Theorem typed_free_in : forall ctx t ty,
   Typed ctx t ty -> FreeIn t (map fst ctx).
 Proof.
@@ -168,6 +185,168 @@ Theorem typed_fv : forall ctx t ty,
   Typed ctx t ty ->
   fv t = map fst ctx.
 Proof. intros. apply reflect_fv. eapply typed_free_in. apply H. Qed.
+
+Theorem fv_type_not_typed : forall ty,
+  fv ty <> [] -> ~exists t, Typed [] t ty.
+Proof.
+  intros ty H [t C]. generalize dependent H. remember [] as ctx eqn:Ec. generalize dependent Ec.
+  induction C; intros; try discriminate; try contradiction; subst; simpl in *.
+  - destruct ctxt; destruct ctxc; invert Ec. specialize (IHC1 eq_refl).
+    assert (A := typed_free_in _ _ _ C1). apply reflect_fv in A. simpl in *. rewrite A in *. simpl in *.
+    destruct arg; [| apply (IHC2 eq_refl H1)]. clear IHC2.
+    destruct (fv_slow t) as [| hd tl] eqn:Et; [contradiction |].
+    induction H0; invert C2.
+Abort.
+
+(*****)
+
+Fixpoint delete n {T} (li : list T) :=
+  match li with
+  | [] => None
+  | hd :: tl =>
+      match n with
+      | O => Some tl
+      | S n' => option_map (cons hd) (delete n' tl)
+      end
+  end.
+
+Lemma delete_exact : forall {T} la (x : T) lb,
+  delete (Datatypes.length la) (la ++ x :: lb) = Some (la ++ lb).
+Proof. intros T la. induction la; intros; simpl in *; [| rewrite IHla]; reflexivity. Qed.
+
+Theorem grand_unified_subst_preserves_typing : forall ctx t T i x,
+  Typed ctx t T ->
+  nth_error ctx i = Some (x, t) ->
+  exists f, (
+    nth_error (grand_unified_subst t) i = Some (x, f) /\
+    exists ctx', (
+      delete i ctx = Some ctx' /\
+      forall y,
+      Typed [] y t ->
+      Typed ctx' (f y) T)).
+Proof.
+  intros ctx t T i x Ht Hc. apply nth_error_split in Hc as [ctxa [ctxb [Hc Hl]]]. subst.
+  assert (Hf := typed_fv _ _ _ Ht). assert (Hg := grand_unified_subst_exactly_fv t).
+  destruct (nth_error (grand_unified_subst t) (Datatypes.length ctxa)) as [[y f] |] eqn:En. 2: {
+    rewrite (nth_error_nth' _ ("doesn't matter"%string, fun x => x)) in En. { discriminate En. }
+    assert (A : Datatypes.length (grand_unified_subst t) = Datatypes.length (ctxa ++ (x, t) :: ctxb)). {
+      rewrite Hf in Hg. eapply f_equal in Hg. repeat rewrite map_length in Hg. symmetry. assumption. }
+    rewrite app_length in A. rewrite A. simpl. apply Nat.lt_add_pos_r. apply Nat.lt_0_succ. }
+  apply nth_error_split in En as [gusa [gusb [Eg El]]]. repeat rewrite Eg in *.
+  assert (A : y = x). {
+    rewrite Hf in Hg. assert (N :
+      nth_error (map fst (ctxa ++ (x, t) :: ctxb)) (Datatypes.length ctxa) =
+      nth_error (map fst (gusa ++ (y, f) :: gusb)) (Datatypes.length gusa)
+    ). { f_equal. assumption. symmetry. assumption. } repeat rewrite nth_error_map in N.
+    rewrite nth_error_app2 in N; [| constructor]. rewrite nth_error_app2 in N; [| constructor].
+    repeat rewrite Nat.sub_diag in N. simpl in *. invert N. reflexivity. } subst.
+  exists f. split. { reflexivity. } exists (ctxa ++ ctxb). split. { apply delete_exact. } intros; simpl in *.
+  rewrite Hf in Hg. clear Hf.
+  (*********************************************************************************************************)
+  generalize dependent f. generalize dependent gusa. generalize dependent gusb. generalize dependent y.
+  remember (ctxa ++ (x, t) :: ctxb) as ctx eqn:Ectx.
+  generalize dependent ctxa. generalize dependent ctxb. generalize dependent x.
+  induction Ht; intros; subst; simpl in *; try (destruct gusa; discriminate).
+  - destruct gusa; [| destruct gusa]; invert Hg. destruct gusb; invert H2. invert Eg.
+    destruct ctxa; invert El. invert Ectx. assumption.
+  - admit.
+  - admit.
+  - admit.
+  - clear IHHt1 IHHt2. invert H1.
+  - clear IHHt1 IHHt2. invert H1.
+    + destruct ctxf; destruct ctxx; invert H3. simpl in *. invert H.
+
+  generalize dependent y. generalize dependent gusa. generalize dependent gusb. generalize dependent f.
+  generalize dependent ctxb. generalize dependent ctxa. generalize dependent x. generalize dependent T.
+  induction t; intros; try (destruct gusa; discriminate Eg); simpl in *.
+  - destruct gusa; [| destruct gusa]; invert Eg. destruct ctxa; [| discriminate El]. destruct ctxb; invert Hf.
+    simpl in *. clear Hg El. invert Ht. assumption.
+  - invert Ht. generalize dependent arg. generalize dependent t1. generalize dependent IHt2. generalize dependent x.
+    generalize dependent ctxa. generalize dependent ctxb. generalize dependent t. generalize dependent f.
+    generalize dependent gusb. generalize dependent gusa. generalize dependent y. generalize dependent ctxt.
+    generalize dependent ctxc. generalize dependent kind. induction H9; intros; simpl in *; subst; simpl in *.
+    + clear IHt2. (* contradictory *) destruct arg; invert H7. simpl in *. repeat rewrite app_nil_r in *. subst.
+      eapply IHt1.
+      clear IHt1 IHt2 Hf Eg Hg.
+
+  - invert Ht. assert (A := Nat.leb_spec0 (Datatypes.length ctxt) (Datatypes.length ctxa)). destruct A.
+    + generalize dependent id. generalize dependent arg. generalize dependent t1. generalize dependent t2.
+      generalize dependent x. generalize dependent ctxt. generalize dependent ctxb. generalize dependent t.
+      generalize dependent f. generalize dependent gusb. generalize dependent gusa. generalize dependent y.
+      generalize dependent ctxc. generalize dependent kind. induction ctxa; intros; subst; simpl in *.
+      * destruct ctxt; invert l. destruct gusa; invert El.
+        assert (A := typed_fv _ _ _ H5). simpl in A. rewrite A in *. clear IHt1. (* contradictory *)
+        assert (B := A). rewrite grand_unified_subst_exactly_fv in B. destruct (grand_unified_subst t1); invert B.
+        simpl in *. subst. simpl in *.
+        destruct arg as [arg |]; simpl in *. 2: {
+          destruct (grand_unified_subst t2) eqn:E2; invert Eg. destruct p. invert H1.
+          repeat rewrite Hf in *. invert Hg. repeat rewrite H1 in *.
+          econstructor; [apply H5 | | reflexivity |].
+          - eapply (IHt2 _ _ []); clear IHt2; simpl in *; [| f_equal; symmetry; assumption | rewrite app_nil_l; reflexivity | simpl; f_equal | reflexivity |].
+            + admit.
+            + admit.
+            + reflexivity.
+          repeat rewrite H1 in *. eapply (IHt2 _ _ []); simpl in *; [| f_equal; symmetry; apply H1 | | | |].
+          - admit.
+          - f_equal. symmetry. apply H1.
+        }
+        clear IHt1 IHt2. clear Hf Eg Hg. eapply (IHt1 _ _ []); clear IHt1 IHt2; simpl in *.
+        clear Hf Eg Hg.
+  - invert Ht. destruct arg as [arg |]. 2: {
+      destruct (Datatypes.length ctxt <=? Datatypes.length ctxa) eqn:Ec.
+      rewrite Hg in Hf. clear IHt1 IHt2. Hf Eg Hg. invert H.
+    }
+Qed.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 (* Look up a value by key and remove it from a key-value list. *)
 Fixpoint yoink {T} s (li : list (string * T)) :=
@@ -273,7 +452,6 @@ Proof.
   destruct a. destruct i; simpl in *. { reflexivity. } apply IHli.
 Qed.
 
-(*
 Theorem grand_unified_subst_preserves_typing : forall ctx t ty,
   Typed ctx t ty ->
   forall i s st ctx',
@@ -378,4 +556,3 @@ Proof.
 
   - destruct (eqb x id) eqn:E; invert H0. apply eqb_eq in E. subst. induction H.
 Qed.
-*)

@@ -72,8 +72,8 @@ From Lang Require Import
 Inductive term : Set :=
     (* Type with no constructors. *)
   | TmVoid
-    (* Any term under (STRICTLY under) this universe level. *)
-  | TmStar
+    (* Any term under this universe level. *)
+  | TmStar (univ : nat)
     (* Variable, by name. *)
   | TmVarS (id : string)
     (* Atom with no arguments. *)
@@ -139,7 +139,8 @@ Qed.
 
 Fixpoint eq_term lhs rhs :=
   match lhs, rhs with
-  | TmVoid, TmVoid | TmStar, TmStar => true
+  | TmVoid, TmVoid => true
+  | TmStar a, TmStar b => Nat.eqb a b
   | TmVarS a, TmVarS b => eqb a b
   | TmAtom idl, TmAtom idr => eqb idl idr
   | TmPack idl argl tyl curryl, TmPack idr argr tyr curryr => andb (andb (andb

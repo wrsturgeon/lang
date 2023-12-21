@@ -16,7 +16,7 @@ Fixpoint destructive_search needle haystack :=
 Fixpoint fv_slow t :=
   match t with
   | TmVoid
-  | TmStar
+  | TmStar _
   | TmAtom _ =>
       []
   | TmVarS s =>
@@ -54,7 +54,7 @@ Proof. intros. simpl. reflexivity. Qed.
 Fixpoint fv_fast acc t :=
   match t with
   | TmVoid
-  | TmStar
+  | TmStar _
   | TmAtom _ =>
       acc
   | TmVarS s =>
@@ -125,8 +125,8 @@ Proof. intros. simpl. reflexivity. Qed.
 Inductive FreeIn : term -> list string -> Prop :=
   | FreeVoid :
       FreeIn TmVoid []
-  | FreeStar :
-      FreeIn TmStar []
+  | FreeStar : forall univ,
+      FreeIn (TmStar univ) []
   | FreeAtom : forall id,
       FreeIn (TmAtom id) []
   | FreeVarS : forall x,
@@ -201,9 +201,3 @@ Proof.
         intro C. simpl in C. invert C. contradiction E. reflexivity.
     + econstructor; try apply IHt1; try apply IHt2; reflexivity.
 Qed.
-
-Fixpoint str_in li s :=
-  match li with
-  | [] => false
-  | hd :: tl => if eqb s hd then true else str_in tl s
-  end.

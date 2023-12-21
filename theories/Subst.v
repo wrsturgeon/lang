@@ -38,7 +38,7 @@ Proof. induction li. { reflexivity. } destruct a. simpl. rewrite IHli. reflexivi
 Fixpoint grand_unified_subst t : list (string * (term -> term)) :=
   match t with
   | TmVoid
-  | TmStar
+  | TmStar _
   | TmAtom _ =>
       []
   | TmVarS s =>
@@ -109,7 +109,7 @@ Definition subst x y t := option_map (fun f => f y) (pair_lookup x (grand_unifie
 Arguments subst x y t/.
 
 Example subst_simple : forall f x,
-  subst f TmStar (TmAppl (TmVarS f) x) = Some (TmAppl TmStar x).
+  subst f TmVoid (TmAppl (TmVarS f) x) = Some (TmAppl TmVoid x).
 Proof. intros. simpl. rewrite eqb_refl. reflexivity. Qed.
 
 Example grand_unified_subst_simple :
