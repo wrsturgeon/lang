@@ -14,71 +14,70 @@ Arguments context/.
 Definition judgment : Type := context -> term -> term -> Prop.
 Arguments judgment/.
 
-Inductive WithWeakening (P : judgment) : judgment :=
-  | WeakSkip : forall hd tl t t',
-      WithWeakening P tl t t' ->
-      WithWeakening P (hd :: tl) t t'
-  | WeakOrig : forall ctx t t',
-      P ctx t t' ->
-      WithWeakening P ctx t t'
-  .
+(* First context is below the inference line; second context is above the inference line. *)
+Definition extension : Type := context -> context -> Prop.
+Arguments extension/.
 
-Inductive WithContraction (P : judgment) : judgment :=
-  | CntrCopy : forall hd tl t t',
-      WithContraction P (hd :: hd :: tl) t t' ->
-      WithContraction P (hd :: tl) t t'
-  | CntrOrig : forall ctx t t',
-      P ctx t t' ->
-      WithContraction P ctx t t'
-  .
+Variant Weakening : extension := WeakeningCtor : forall hd tl, Weakening (hd :: tl) tl.
+Variant Contraction : extension := ContractionCtor : forall hd tl, Contraction (hd :: tl) (hd :: hd :: tl).
+Definition Exchange : extension := @Permutation _.
+Arguments Exchange/ orig perm.
 
-Inductive WithExchange (P : judgment) : judgment :=
-  | ExchPerm : forall ctx1 ctx2 t t',
-      WithExchange P ctx2 t t' ->
-      Permutation ctx1 ctx2 ->
-      WithExchange P ctx1 t t'
-  | ExchOrig : forall ctx t t',
-      P ctx t t' ->
-      WithExchange P ctx t t'
+Variant MaybeSubst : option string -> term -> term -> term -> Prop :=
+  | MaybeSubstNone : forall y t,
+      MaybeSubst None y t t
+  | MaybeSubstSome : forall t x y t',
+      subst x y t = Some t' ->
+      MaybeSubst (Some x) y t t'
   .
 
 (* Typed extremely strictly, as if on a stack: no exchange, no weakening, no contraction. *)
-Inductive Typed : context -> term -> term -> Prop :=
+Inductive TypedWith (extn : list extension) : judgment :=
   | TyStar : forall univ,
-      Typed [] (TmStar univ) (TmStar (S univ))
+      TypedWith extn [] (TmStar univ) (TmStar (S univ))
   | TyVarS : forall id t,
-      Typed [(id, t)] (TmVarS id) t
+      TypedWith extn [(id, t)] (TmVarS id) t
   | TyAtom : forall id,
-      Typed [] (TmAtom id) (TmAtom id)
+      TypedWith extn [] (TmAtom id) (TmAtom id)
   | TyPack : forall ctx ctxt ctxc id arg ty curry t kind,
-      Typed ctxt ty kind ->
-      Typed (match arg with Some x => (x, ty) :: ctxc | None => ctxc end) curry t ->
+      TypedWith extn ctxt ty kind ->
+      TypedWith extn (match arg with Some x => (x, ty) :: ctxc | None => ctxc end) curry t ->
       ctxt ++ ctxc = ctx ->
       AtomId id curry ->
-      Typed ctx (TmPack id arg ty curry) (TmForA arg ty t)
+      TypedWith extn ctx (TmPack id arg ty curry) (TmForA arg ty t)
   | TyForA : forall ctx ctxt ctxc arg ty body t kind,
-      Typed ctxt ty kind ->
-      Typed (match arg with Some x => (x, ty) :: ctxc | None => ctxc end) body t ->
+      TypedWith extn ctxt ty kind ->
+      TypedWith extn (match arg with Some x => (x, ty) :: ctxc | None => ctxc end) body t ->
       ctxt ++ ctxc = ctx ->
-      Typed ctx (TmForA arg ty body) (TmForA arg ty t)
-  | TyApplNone : forall ctx ctxf ctxx f x ty body,
-      Typed ctxf f (TmForA None ty body) ->
-      Typed ctxx x ty ->
-      ctxf ++ ctxx = ctx->
-      Typed ctx (TmAppl f x) body
-  (* and here's the rule that allows dependent types: *)
-  | TyApplSome : forall ctx ctxf ctxx f x arg ty body sub,
-      Typed ctxf f (TmForA (Some arg) ty body) ->
-      Typed ctxx x ty ->
+      TypedWith extn ctx (TmForA arg ty body) (TmForA arg ty t)
+  | TyAppl : forall ctx ctxf ctxx f x arg ty body substituted,
+      TypedWith extn ctxf f (TmForA arg ty body) ->
+      TypedWith extn ctxx x ty ->
       ctxf ++ ctxx = ctx ->
-      subst arg x body = Some sub ->
-      Typed ctx (TmAppl f x) sub
+      MaybeSubst arg x body substituted ->
+      TypedWith extn ctx (TmAppl f x) substituted
   (*
   | TyStar : forall ctx t ty,
       Typed ctx t ty ->
       Typed ctx t TmStar
   *)
+  | TyExtn : forall (E : extension) ctx ctx' t ty,
+      In E extn ->
+      E ctx ctx' ->
+      TypedWith extn ctx' t ty ->
+      TypedWith extn ctx t ty
   .
+Arguments TypedWith extn ctx t ty.
+Arguments TyStar {extn} univ.
+Arguments TyVarS {extn} id t.
+Arguments TyAtom {extn} id.
+Arguments TyPack {extn} ctx ctxt ctxc id arg ty curry t kind Hty Hbody Hcat Hatom.
+Arguments TyForA {extn} ctx ctxt ctxc arg ty body t kind Hty Hbody Hcat.
+Arguments TyAppl {extn} ctx ctxf ctxx f x arg ty body substituted Hf Hx Hcat Hsubst.
+Arguments TyExtn {extn} E ctx ctx' t ty Hin Hextn Hty.
+
+Definition Typed := TypedWith [].
+Arguments Typed/ ctx t ty.
 
 (* TODO: CRUCIAL SAFETY THEOREMS: (1) Star n does not have type Star n, and (2) no term has type Void. *)
 
@@ -92,8 +91,6 @@ Theorem dependent_types_woohoo :
   Typed [] polymorphic_identity_fn polymorphic_identity_ty.
 Proof. repeat econstructor. Qed.
 
-Theorem WAIT_A_SECOND : fv polymorphic_identity_ty = []. Proof. simpl. fail. (* NOT TRUE! *)
-
 (* Showing that, given f: X -> Y and x: X, we can type (f x) : Y. *)
 Example type_fn_app :
   let f := TmVarS "f"%string in
@@ -105,7 +102,7 @@ Example type_fn_app :
   let ctx := [tf; tx] in
   let fx := TmAppl f x in
   Typed ctx fx Y.
-Proof. simpl. eapply TyApplNone. { apply TyVarS. } { apply TyVarS. } reflexivity. Qed.
+Proof. repeat econstructor. Qed.
 
 (* Almost exactly like the above, but trying to use `x` twice (f : X -> X -> Y). Successfully rejected. *)
 Example type_prevents_reuse : ~exists t,
@@ -125,12 +122,10 @@ Proof.
     ("f"%string, TmForA None (TmVarS "X") (TmForA None (TmVarS "X") (TmVarS "Y")));
     ("x"%string, TmVarS "X")] as ctx eqn:Ec. generalize dependent Ec.
   remember (TmAppl (TmAppl (TmVarS "f") (TmVarS "x")) (TmVarS "x")) as ty eqn:Et. generalize dependent Et.
-  induction C; intros; simpl in *; subst; try discriminate;
-  try (invert Et; invert C1; invert H1; invert Ec; destruct ctxx0; invert H3; destruct ctxx; invert H4; invert C2);
-  try (invert Et; invert C1; invert H2; invert Ec);
-  try (
-    invert C; [| invert H1; invert H3; invert H4 | apply (IHC eq_refl eq_refl)];
-    invert H1; invert H2; invert H5; destruct ctxx0; destruct ctxx; invert H3; invert H6; invert H4).
+  remember [] as extn eqn:Ex. generalize dependent Ex.
+  induction C; intros; subst; simpl in *; try discriminate; try contradiction.
+  invert Et. invert C2; [| invert H]. destruct ctxf; [| destruct ctxf; [| destruct ctxf]]; invert Ec.
+  invert C1; [| invert H]. invert H2; [| invert H]. invert H5. invert H3. invert H.
 Qed.
 
 (* ...But the above becomes perfectly okay if we add exchange and contraction, i.e., a heap: *)
@@ -143,20 +138,15 @@ Example type_contraction_allows_reuse :
   let tx := ("x"%string, X) in
   let ctx := [tf; tx] in
   let fxx := TmAppl (TmAppl f x) x in
-  WithExchange (WithContraction (WithExchange Typed)) ctx fxx Y.
+  TypedWith [Contraction; Exchange] ctx fxx Y.
 Proof.
-  simpl.
-  eapply ExchPerm. apply ExchOrig. (* Move `x` to the front *)
-  apply CntrCopy. apply CntrOrig. (* Copy it *)
-  eapply ExchPerm. apply ExchOrig. (* Move both to the back again *)
-  repeat econstructor. (* This does a LOT of work for us; now only permutations left *)
-  - simpl. eapply perm_trans. { eapply perm_trans. { apply perm_skip. apply perm_swap. } apply perm_swap. }
-    repeat apply perm_skip. apply perm_nil.
-  - apply perm_swap.
+  eapply (TyExtn Exchange). { right. left. reflexivity. } shelve. (* let Coq come up with the permutation for us *)
+  eapply (TyExtn Contraction). { left. reflexivity. } shelve.
+  eapply (TyExtn Exchange). { right. left. reflexivity. } shelve.
+  repeat econstructor. (* this does a ridiculous amount of work for us then boxes it up so it doesn't look like it *)
+  Unshelve. shelve. apply perm_swap. shelve. constructor.
+  eapply perm_trans. apply perm_skip. apply perm_swap. apply perm_swap.
 Qed.
-
-(* TODO: Maybe take an argument in `Typed` that represents the typing relation in hypotheses,
- * so we don't have to nest structural rules like above. *)
 
 (* NOTE: If we can type all functions s.t. output type represents only actual possible outputs,
    then we should be able to prove that all arrow types have an input type size
@@ -185,6 +175,8 @@ Theorem typed_fv : forall ctx t ty,
   Typed ctx t ty ->
   fv t = map fst ctx.
 Proof. intros. apply reflect_fv. eapply typed_free_in. apply H. Qed.
+
+Theorem WAIT_A_SECOND : fv polymorphic_identity_ty = []. Proof. simpl. fail. (* NOT TRUE! *)
 
 Theorem fv_type_not_typed : forall ty,
   fv ty <> [] -> ~exists t, Typed [] t ty.
