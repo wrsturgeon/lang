@@ -81,7 +81,7 @@ Inductive term : Set :=
     (* Atom with arguments (via currying). *)
   | TmPack (id : string) (arg : option string) (ty : term) (curry : term)
     (* Lambda abstraction, i.e. for-all statement. *)
-  | TmForA (arg : option string) (ty : term) (body : term)
+  | TmForA (arg : option string) (ty : term) (body : term) (* TODO: capture *)
     (* Function (or atom with arguments) application. *)
   | TmAppl (f : term) (x : term)
   .

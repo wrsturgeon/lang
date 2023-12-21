@@ -2,8 +2,9 @@ From Coq Require Import
   Lists.List.
 Import ListNotations.
 From Lang Require Import
-  Closed
+  FreeVariables
   Invert
+  Mint
   Terms.
 
 Fixpoint smap
@@ -33,6 +34,34 @@ Theorem map_fst_smap : forall f li,
   map fst (smap f li) = map fst li.
 Proof. induction li. { reflexivity. } destruct a. simpl. rewrite IHli. reflexivity. Qed.
 
+Fixpoint remove_key_all {T} x (li : list (string * T)) :=
+  match li with
+  | [] => []
+  | (s, f) :: tl =>
+      let recursed := remove_key_all x tl in
+      if eqb x s then recursed else (s, f) :: recursed
+  end.
+
+Definition remove_key_if_head {T} x (li : list (string * T)) :=
+  match li with
+  | [] => []
+  | (s, f) :: tl => if eqb x s then tl else li
+  end.
+
+Lemma remove_all_key_eq : forall {T} x (li : list (string * T)),
+  map fst (remove_key_all x li) = remove_all x (map fst li).
+Proof.
+  intros. generalize dependent x. induction li; intros; simpl in *. { reflexivity. }
+  destruct a. simpl. destruct (eqb x s) eqn:E. { apply IHli. } simpl. f_equal. apply IHli.
+Qed.
+
+Lemma remove_if_head_key_eq : forall {T} x (li : list (string * T)),
+  map fst (remove_key_if_head x li) = remove_if_head x (map fst li).
+Proof.
+  intros. generalize dependent x. induction li; intros; simpl in *. { reflexivity. }
+  destruct a. simpl. destruct (eqb x s) eqn:E. { reflexivity. } simpl. reflexivity.
+Qed.
+
 (* Ludicrous that this is the easiest correct definition to write.
  * Generates substitution functions for every free variable at once. *)
 Fixpoint grand_unified_subst t : list (string * (term -> term)) :=
@@ -45,59 +74,26 @@ Fixpoint grand_unified_subst t : list (string * (term -> term)) :=
       [(s, fun x => x)]
   | TmPack id arg ty curry =>
       smap (fun f x => TmPack id arg (f x) curry) (grand_unified_subst ty) ++
-      smap (fun f x => TmPack id arg ty (f x))
-      match arg, grand_unified_subst curry with
-      | Some a, (s, hd) :: tl => if eqb a s then tl else (s, hd) :: tl
-      | _, passthru => passthru
-      end
+      smap (fun f x => TmPack id arg ty (f x)) (
+        let recursed := grand_unified_subst curry in
+        match arg with
+        | None => recursed
+        | Some a =>
+            (if mint ty then remove_key_all else remove_key_if_head) a recursed
+        end)
   | TmForA arg ty body =>
       smap (fun f x => TmForA arg (f x) body) (grand_unified_subst ty) ++
-      smap (fun f x => TmForA arg ty (f x))
-      match arg, grand_unified_subst body with
-      | Some a, (s, hd) :: tl => if eqb a s then tl else (s, hd) :: tl
-      | _, passthru => passthru
-      end
+      smap (fun f x => TmForA arg ty (f x)) (
+        let recursed := grand_unified_subst body in
+        match arg with
+        | None => recursed
+        | Some a =>
+            (if mint ty then remove_key_all else remove_key_if_head) a recursed
+        end)
   | TmAppl a b =>
       smap (fun f x => TmAppl (f x) b) (grand_unified_subst a) ++
       smap (fun f x => TmAppl a (f x)) (grand_unified_subst b)
   end.
-
-(*
-(* Ludicrous that this is the easiest correct definition to write.
- * Generates substitution functions for every free variable at once. *)
-Fixpoint grand_unified_subst t : list (string * (term -> term)) :=
-  match t with
-  | TmVoid
-  | TmStar
-  | TmAtom _ =>
-      []
-  | TmVarS s =>
-      [(s, fun x => x)]
-  | TmPack id None a b =>
-      smap (fun f x => TmPack id None (f x) b) (grand_unified_subst a) ++
-      smap (fun f x => TmPack id None a (f x)) (grand_unified_subst b)
-  | TmForA None a b =>
-      smap (fun f x => TmForA None (f x) b) (grand_unified_subst a) ++
-      smap (fun f x => TmForA None a (f x)) (grand_unified_subst b)
-  | TmAppl a b =>
-      smap (fun f x => TmAppl (f x) b) (grand_unified_subst a) ++
-      smap (fun f x => TmAppl a (f x)) (grand_unified_subst b)
-  | TmPack id (Some arg) ty curry =>
-      smap (fun f x => TmPack id (Some arg) (f x) curry) (grand_unified_subst ty) ++
-      smap (fun f x => TmPack id (Some arg) ty (f x))
-      match grand_unified_subst curry with
-      | [] => []
-      | (s, hd) :: tl => if eqb arg s then tl else (s, hd) :: tl
-      end
-  | TmForA (Some arg) ty curry =>
-      smap (fun f x => TmForA (Some arg) (f x) curry) (grand_unified_subst ty) ++
-      smap (fun f x => TmForA (Some arg) ty (f x))
-      match grand_unified_subst curry with
-      | [] => []
-      | (s, hd) :: tl => if eqb arg s then tl else (s, hd) :: tl
-      end
-  end.
-*)
 
 Fixpoint pair_lookup {V} key (pairs : list (string * V)) :=
   match pairs with
@@ -119,19 +115,20 @@ Example grand_unified_subst_simple :
 Proof. reflexivity. Qed.
 
 Example grand_unified_subst_lambda :
-  grand_unified_subst (TmForA (Some "x") TmVoid (TmAppl (TmVarS "x") (TmVarS "x")))%string = [
+  grand_unified_subst (TmForA (Some "x") (TmVarS "T") (TmAppl (TmVarS "x") (TmVarS "x")))%string = [
+    ("T", fun x => TmForA (Some "x") x (TmAppl (TmVarS "x") (TmVarS "x")));
     (* ignore the first `x`, since it's bound, then *)
-    ("x", fun x => TmForA (Some "x") TmVoid (TmAppl (TmVarS "x") x))%string].
+    ("x", fun x => TmForA (Some "x") (TmVarS "T") (TmAppl (TmVarS "x") x))]%string.
 Proof. reflexivity. Qed.
 
 Theorem grand_unified_subst_exactly_fv : forall t,
   fv t = map fst (grand_unified_subst t).
 Proof.
-  intros t. induction t; intros; simpl in *; try reflexivity;
-  repeat rewrite IHt1; repeat rewrite IHt2; try destruct arg;
+  intros t. induction t; intros; subst; simpl in *; try reflexivity;
+  repeat rewrite IHt1; repeat rewrite IHt2; try destruct arg; destruct (reflect_mint t1);
   repeat rewrite map_distr; repeat rewrite map_fst_smap; f_equal;
-  destruct (grand_unified_subst t2); simpl in *; try reflexivity;
-  destruct p; simpl in *; destruct (eqb s s0); reflexivity.
+  try (symmetry; apply remove_all_key_eq); destruct (grand_unified_subst t2); try reflexivity;
+  destruct p; simpl; destruct (eqb s s0); reflexivity.
 Qed.
 (* WOOHOOOOOOOOOOOOOOO *)
 
@@ -185,17 +182,30 @@ Proof.
   destruct x as [s g]. subst. simpl in *. constructor; [assumption |]. apply IHForall. reflexivity.
 Qed.
 
+Lemma remove_key_all_incl : forall {T} x (li : list (string * T)),
+  incl (remove_key_all x li) li.
+Proof.
+  unfold incl. intros T x li. generalize dependent x. induction li; intros; simpl in *. { destruct H. }
+  destruct a. destruct (eqb x s) eqn:E. { apply eqb_eq in E. subst. right. eapply IHli. apply H. }
+  destruct a0. destruct H. { left. assumption. } right. eapply IHli. apply H.
+Qed.
+
+Lemma remove_key_if_head_incl : forall {T} x (li : list (string * T)),
+  incl (remove_key_if_head x li) li.
+Proof.
+  unfold incl. intros T x [] [a1 a2] H. { inversion H. } destruct p. simpl in H. destruct (eqb x s); [right |]; assumption.
+Qed.
+
 Theorem grand_unified_subst_id : forall t,
   let P := fun p : _ * _ => let (x, f) := p in f (TmVarS x) = t in
   Forall P (grand_unified_subst t).
 Proof.
   induction t as [| | | | id arg a IHa b IHb | arg a IHa b IHb | a IHa b IHb];
   subst; simpl in *; try solve [repeat constructor];
-  apply Forall_app; split; apply Forall_smap; try (destruct arg; [
-    destruct (grand_unified_subst b); [constructor |]; destruct p as [x f]; invert IHb;
-    destruct (eqb s x) eqn:E; [| constructor; [reflexivity |]] |]);
-  (eapply Forall_impl; [| try apply IHa; try apply IHb; apply H2]);
-  intros; destruct a0; rewrite H; reflexivity.
+  apply Forall_app; split; apply Forall_smap; try destruct arg;
+  try (eapply Forall_impl; [| try apply IHa; try apply IHb; apply H2]; intros; destruct a0; f_equal; assumption);
+  destruct (reflect_mint a); eapply incl_Forall; try apply remove_key_all_incl; try apply remove_key_if_head_incl;
+  try (eapply Forall_impl; [| try apply IHa; try apply IHb; apply H2]; intros; destruct a0; f_equal; assumption).
 Qed.
 
 Theorem subst_id : forall x t s,

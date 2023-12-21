@@ -3,8 +3,9 @@ From Coq Require Export
   Sorting.Permutation.
 Export ListNotations.
 From Lang Require Import
-  Closed
+  FreeVariables
   Invert
+  Mint
   Subst
   Terms.
 
@@ -18,10 +19,10 @@ Arguments judgment/.
 Definition extension : Type := context -> context -> Prop.
 Arguments extension/.
 
-Variant Weakening : extension := WeakeningCtor : forall hd tl, Weakening (hd :: tl) tl.
-Variant Contraction : extension := ContractionCtor : forall hd tl, Contraction (hd :: tl) (hd :: hd :: tl).
-Definition Exchange : extension := @Permutation _.
-Arguments Exchange/ orig perm.
+Variant weakening : extension := Weakening : forall hd tl, weakening (hd :: tl) tl.
+Variant contraction : extension := Contraction : forall hd tl, contraction (hd :: tl) (hd :: hd :: tl).
+Definition exchange : extension := @Permutation _.
+Arguments exchange/ orig perm.
 
 Variant MaybeSubst : option string -> term -> term -> term -> Prop :=
   | MaybeSubstNone : forall y t,
@@ -32,25 +33,25 @@ Variant MaybeSubst : option string -> term -> term -> term -> Prop :=
   .
 
 (* Typed extremely strictly, as if on a stack: no exchange, no weakening, no contraction. *)
-Inductive TypedWith (extn : list extension) : judgment :=
-  | TyStar : forall univ,
+Inductive TypedWith : list extension -> judgment :=
+  | TyStar : forall {extn} univ,
       TypedWith extn [] (TmStar univ) (TmStar (S univ))
-  | TyVarS : forall id t,
+  | TyVarS : forall {extn} id t,
       TypedWith extn [(id, t)] (TmVarS id) t
-  | TyAtom : forall id,
+  | TyAtom : forall {extn} id,
       TypedWith extn [] (TmAtom id) (TmAtom id)
-  | TyPack : forall ctx ctxt ctxc id arg ty curry t kind,
+  | TyPack : forall {extn} ctx ctxt ctxc id arg ty curry t kind,
       TypedWith extn ctxt ty kind ->
       TypedWith extn (match arg with Some x => (x, ty) :: ctxc | None => ctxc end) curry t ->
       ctxt ++ ctxc = ctx ->
       AtomId id curry ->
       TypedWith extn ctx (TmPack id arg ty curry) (TmForA arg ty t)
-  | TyForA : forall ctx ctxt ctxc arg ty body t kind,
+  | TyForA : forall {extn} ctx ctxt ctxc arg ty body t kind,
       TypedWith extn ctxt ty kind ->
       TypedWith extn (match arg with Some x => (x, ty) :: ctxc | None => ctxc end) body t ->
       ctxt ++ ctxc = ctx ->
       TypedWith extn ctx (TmForA arg ty body) (TmForA arg ty t)
-  | TyAppl : forall ctx ctxf ctxx f x arg ty body substituted,
+  | TyAppl : forall {extn} ctx ctxf ctxx f x arg ty body substituted,
       TypedWith extn ctxf f (TmForA arg ty body) ->
       TypedWith extn ctxx x ty ->
       ctxf ++ ctxx = ctx ->
@@ -61,7 +62,7 @@ Inductive TypedWith (extn : list extension) : judgment :=
       Typed ctx t ty ->
       Typed ctx t TmStar
   *)
-  | TyExtn : forall (E : extension) ctx ctx' t ty,
+  | TyExtn : forall {extn} (E : extension) ctx ctx' t ty,
       In E extn ->
       E ctx ctx' ->
       TypedWith extn ctx' t ty ->
@@ -123,9 +124,9 @@ Proof.
     ("x"%string, TmVarS "X")] as ctx eqn:Ec. generalize dependent Ec.
   remember (TmAppl (TmAppl (TmVarS "f") (TmVarS "x")) (TmVarS "x")) as ty eqn:Et. generalize dependent Et.
   remember [] as extn eqn:Ex. generalize dependent Ex.
-  induction C; intros; subst; simpl in *; try discriminate; try contradiction.
-  invert Et. invert C2; [| invert H]. destruct ctxf; [| destruct ctxf; [| destruct ctxf]]; invert Ec.
-  invert C1; [| invert H]. invert H2; [| invert H]. invert H5. invert H3. invert H.
+  induction C; intros; subst; simpl in *; try discriminate; try contradiction. invert Et. clear IHC1 IHC2.
+  invert C2; [| invert H]. destruct ctxf; [| destruct ctxf; [| destruct ctxf]]; invert Ec.
+  invert C1; [| invert H]. invert H2; [| invert H]. invert H6. invert H3. invert H.
 Qed.
 
 (* ...But the above becomes perfectly okay if we add exchange and contraction, i.e., a heap: *)
@@ -138,11 +139,11 @@ Example type_contraction_allows_reuse :
   let tx := ("x"%string, X) in
   let ctx := [tf; tx] in
   let fxx := TmAppl (TmAppl f x) x in
-  TypedWith [Contraction; Exchange] ctx fxx Y.
+  TypedWith [contraction; exchange] ctx fxx Y.
 Proof.
-  eapply (TyExtn Exchange). { right. left. reflexivity. } shelve. (* let Coq come up with the permutation for us *)
-  eapply (TyExtn Contraction). { left. reflexivity. } shelve.
-  eapply (TyExtn Exchange). { right. left. reflexivity. } shelve.
+  eapply (TyExtn exchange). { right. left. reflexivity. } shelve. (* let Coq come up with the permutation for us *)
+  eapply (TyExtn contraction). { left. reflexivity. } shelve.
+  eapply (TyExtn exchange). { right. left. reflexivity. } shelve.
   repeat econstructor. (* this does a ridiculous amount of work for us then boxes it up so it doesn't look like it *)
   Unshelve. shelve. apply perm_swap. shelve. constructor.
   eapply perm_trans. apply perm_skip. apply perm_swap. apply perm_swap.
@@ -160,8 +161,15 @@ Qed.
 Theorem typed_free_in : forall ctx t ty,
   Typed ctx t ty -> FreeIn t (map fst ctx).
 Proof.
-  intros. induction H; intros; simpl in *; subst; repeat rewrite map_distr; try assumption;
-  try destruct arg; econstructor; try apply IHTyped1; try apply IHTyped2; reflexivity.
+  intros. simpl in *. remember [] as extn eqn:Ex. generalize dependent Ex.
+  induction H; intros; subst; simpl in *; try solve [constructor]; try contradiction H;
+  repeat rewrite map_distr in *; destruct arg.
+  - destruct (reflect_mint ty). { eapply FreePackMint; [assumption | apply IHTypedWith1 | apply IHTypedWith2 | simpl; constructor |]; try reflexivity. apply wherever_refl.
+  
+  ; (econstructor; [apply IHTypedWith1 | apply IHTypedWith2 |]; reflexivity).
+
+  induction H; try solve [constructor]; intros; subst; simpl in *; try contradiction; repeat rewrite map_distr in *;
+  destruct arg; (econstructor; [apply IHTypedWith1 | apply IHTypedWith2 |]; reflexivity).
 Qed.
 
 Theorem fv_not_typed : forall t,
