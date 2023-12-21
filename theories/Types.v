@@ -32,6 +32,64 @@ Variant MaybeSubst : option string -> term -> term -> term -> Prop :=
       MaybeSubst (Some x) y t t'
   .
 
+(* Prevent having two variables with the same name (fst) but different types (snd). *)
+Inductive MaybeConsKV {K V} k v : list (K * V) -> list (K * V) -> Prop :=
+  | MaybeConsKVNil :
+      MaybeConsKV k v [] []
+  | MaybeConsKVCons : forall tl,
+      MaybeConsKV k v tl ((k, v) :: tl)
+  | MaybeConsKVNotEq : forall hdk hdv tl,
+      k <> hdk ->
+      (* `hdv` can be the same, that's fine: two variables can have the same type *)
+      MaybeConsKV k v ((hdk, hdv) :: tl) ((hdk, hdv) :: tl)
+  .
+
+Inductive WhereverKV {K V} k v : list (K * V) -> list (K * V) -> Prop :=
+  | WhereverKeyNil :
+      WhereverKV k v [] []
+  | WhereverKeyHere : forall a b,
+      WhereverKV k v a b ->
+      WhereverKV k v a ((k, v) :: b)
+  | WhereverKeyNotEq : forall hdk hdv a b,
+      k <> hdk ->
+      (* `v` can be the same, that's fine: two variables can have the same type *)
+      WhereverKV k v a b ->
+      WhereverKV k v ((hdk, hdv) :: a) ((hdk, hdv) :: b)
+  .
+
+(* note that this is nondeterministic: no head non-equality check *)
+Inductive Remove {T} x : list T -> list T -> Prop :=
+  | RemoveHead : forall tl,
+      Remove x (x :: tl) tl
+  | RemoveSkip : forall hd tl tl',
+      Remove x tl tl' ->
+      Remove x (hd :: tl) (hd :: tl')
+  .
+
+Inductive DupFrom {T} : list T -> list T -> list T -> Prop :=
+  | DupFromNil : forall src,
+      DupFrom src [] src
+  | DupFromCopy : forall hd tl src src',
+      In hd src ->
+      DupFrom src tl src' ->
+      DupFrom src (hd :: tl) src'
+  | DupFromTake : forall hd tl src src' src'',
+      Remove hd src src' ->
+      DupFrom src' tl src'' ->
+      DupFrom src (hd :: tl) src''
+  .
+Ltac dup_from_nil := apply DupFromNil.
+Ltac dup_from_copy := eapply DupFromCopy; [repeat (try (left; reflexivity); right) |].
+Ltac dup_from_take := eapply DupFromTake; [repeat constructor |].
+
+Example dup_from_12345 : DupFrom [1;2;3;4;5] [1;1;1;1;1;1;4;2;5;3;3] [1;3;5].
+Proof.
+  dup_from_copy. dup_from_copy. dup_from_copy. dup_from_copy. dup_from_copy. dup_from_copy.
+  dup_from_take. dup_from_take. dup_from_copy. dup_from_copy. dup_from_copy. dup_from_nil.
+Qed.
+
+(* TODO: Use `DupFrom` to separate type-typing context and body-typing context. *)
+
 (* Typed extremely strictly, as if on a stack: no exchange, no weakening, no contraction. *)
 Inductive TypedWith : list extension -> judgment :=
   | TyStar : forall {extn} univ,
@@ -40,15 +98,17 @@ Inductive TypedWith : list extension -> judgment :=
       TypedWith extn [(id, t)] (TmVarS id) t
   | TyAtom : forall {extn} id,
       TypedWith extn [] (TmAtom id) (TmAtom id)
-  | TyPack : forall {extn} ctx ctxt ctxc id arg ty curry t kind,
-      TypedWith extn ctxt ty kind ->
-      TypedWith extn (match arg with Some x => (x, ty) :: ctxc | None => ctxc end) curry t ->
-      ctxt ++ ctxc = ctx ->
+  | TyPack : forall {extn} ctx ctxt ctxc ctxa id arg ty curry t kind,
       AtomId id curry ->
-      TypedWith extn ctx (TmPack id arg ty curry) (TmForA arg ty t)
-  | TyForA : forall {extn} ctx ctxt ctxc arg ty body t kind,
       TypedWith extn ctxt ty kind ->
-      TypedWith extn (match arg with Some x => (x, ty) :: ctxc | None => ctxc end) body t ->
+      TypedWith extn ctxa curry t ->
+      match arg with None => eq | Some a => if mint ty then WhereverKV a ty else MaybeConsKV a ty end ctxc ctxa ->
+      ctxt ++ ctxc = ctx ->
+      TypedWith extn ctx (TmPack id arg ty curry) (TmForA arg ty t)
+  | TyForA : forall {extn} ctx ctxt ctxc ctxa arg ty body t kind,
+      TypedWith extn ctxt ty kind ->
+      TypedWith extn ctxa body t ->
+      match arg with None => eq | Some a => if mint ty then WhereverKV a ty else MaybeConsKV a ty end ctxc ctxa ->
       ctxt ++ ctxc = ctx ->
       TypedWith extn ctx (TmForA arg ty body) (TmForA arg ty t)
   | TyAppl : forall {extn} ctx ctxf ctxx f x arg ty body substituted,
@@ -72,8 +132,8 @@ Arguments TypedWith extn ctx t ty.
 Arguments TyStar {extn} univ.
 Arguments TyVarS {extn} id t.
 Arguments TyAtom {extn} id.
-Arguments TyPack {extn} ctx ctxt ctxc id arg ty curry t kind Hty Hbody Hcat Hatom.
-Arguments TyForA {extn} ctx ctxt ctxc arg ty body t kind Hty Hbody Hcat.
+Arguments TyPack {extn} ctx ctxt ctxc ctxa id arg ty curry t kind Hatom Hty Hcurry Hbound Hcat.
+Arguments TyForA {extn} ctx ctxt ctxc ctxa    arg ty  body t kind       Hty Hbody  Hbound Hcat.
 Arguments TyAppl {extn} ctx ctxf ctxx f x arg ty body substituted Hf Hx Hcat Hsubst.
 Arguments TyExtn {extn} E ctx ctx' t ty Hin Hextn Hty.
 
@@ -88,9 +148,29 @@ Arguments Typed/ ctx t ty.
  * `\t: *. (t -> t)` by making the `x` anonymous. *)
 Definition polymorphic_identity_fn := (TmForA (Some "t") (TmStar 0) (TmForA (Some "x") (TmVarS "t") (TmVarS "x")))%string.
 Definition polymorphic_identity_ty := (TmForA (Some "t") (TmStar 0) (TmForA (Some "x") (TmVarS "t") (TmVarS "t")))%string.
+Arguments polymorphic_identity_fn/.
+Arguments polymorphic_identity_ty/.
 Theorem dependent_types_woohoo :
   Typed [] polymorphic_identity_fn polymorphic_identity_ty.
-Proof. repeat econstructor. Qed.
+Proof.
+  simpl. eapply TyForA.
+  - (* typing `TmStar` *)
+    apply TyStar.
+  - (* typing the body *)
+    eapply TyForA.
+    + (* typing `TmVarS "t"` *)
+      apply TyVarS.
+    + (* typing `TmVarS "x" : TmVarS "t"` *)
+      apply TyVarS.
+    + (* dealing with bound variables *)
+      simpl. constructor.
+    + (* concatenating the contexts used to type the type and the body *)
+      simpl. reflexivity.
+  - (* deadling with bound variables *)
+    simpl. constructor. constructor.
+  - (* concatenating the contexts used to type the type and the body *)
+    reflexivity.
+Qed.
 
 (* Showing that, given f: X -> Y and x: X, we can type (f x) : Y. *)
 Example type_fn_app :
@@ -155,6 +235,16 @@ Qed.
    Dizzying implications in terms of what a program has to start with--TODO: figure this out.
    This might be a crucial lemma in proving type safety (since a void output implies void input)! *)
 
+Lemma maybe_cons_fst : forall {A B} f s li post,
+  @MaybeConsKV A B s f            li           post ->
+  @MaybeCons   A   s     (map fst li) (map fst post).
+Proof. intros. induction H; constructor; assumption. Qed.
+
+Lemma wherever_fst : forall {A B} f s li post,
+  @WhereverKV A B s f            li           post ->
+  @Wherever   A   s     (map fst li) (map fst post).
+Proof. intros. induction H; constructor; assumption. Qed.
+
 (* If a term `t` is typed in a context, then
  * that context has EXACTLY `fv t`, in order.
  * Fantastic that we can prove something this precise! *)
@@ -163,13 +253,9 @@ Theorem typed_free_in : forall ctx t ty,
 Proof.
   intros. simpl in *. remember [] as extn eqn:Ex. generalize dependent Ex.
   induction H; intros; subst; simpl in *; try solve [constructor]; try contradiction H;
-  repeat rewrite map_distr in *; destruct arg.
-  - destruct (reflect_mint ty). { eapply FreePackMint; [assumption | apply IHTypedWith1 | apply IHTypedWith2 | simpl; constructor |]; try reflexivity. apply wherever_refl.
-  
-  ; (econstructor; [apply IHTypedWith1 | apply IHTypedWith2 |]; reflexivity).
-
-  induction H; try solve [constructor]; intros; subst; simpl in *; try contradiction; repeat rewrite map_distr in *;
-  destruct arg; (econstructor; [apply IHTypedWith1 | apply IHTypedWith2 |]; reflexivity).
+  repeat rewrite map_distr in *; try (destruct arg; subst);
+  destruct (mint ty) eqn:Em; econstructor; try apply IHTypedWith1; try apply IHTypedWith2; try reflexivity;
+  rewrite Em; try eapply wherever_fst; try eapply maybe_cons_fst; try apply H2; apply H1.
 Qed.
 
 Theorem fv_not_typed : forall t,
@@ -184,16 +270,19 @@ Theorem typed_fv : forall ctx t ty,
   fv t = map fst ctx.
 Proof. intros. apply reflect_fv. eapply typed_free_in. apply H. Qed.
 
-Theorem WAIT_A_SECOND : fv polymorphic_identity_ty = []. Proof. simpl. fail. (* NOT TRUE! *)
-
 Theorem fv_type_not_typed : forall ty,
   fv ty <> [] -> ~exists t, Typed [] t ty.
 Proof.
   intros ty H [t C]. generalize dependent H. remember [] as ctx eqn:Ec. generalize dependent Ec.
+  unfold Typed in C. remember [] as extn eqn:Ex. generalize dependent Ex.
   induction C; intros; try discriminate; try contradiction; subst; simpl in *.
-  - destruct ctxt; destruct ctxc; invert Ec. specialize (IHC1 eq_refl).
-    assert (A := typed_free_in _ _ _ C1). apply reflect_fv in A. simpl in *. rewrite A in *. simpl in *.
-    destruct arg; [| apply (IHC2 eq_refl H1)]. clear IHC2.
+  - destruct ctxt; destruct ctxc; invert Ec. repeat specialize (IHC1 eq_refl). repeat specialize (IHC2 eq_refl).
+    assert (A := typed_free_in _ _ _ C1). apply reflect_fv in A. simpl in *. repeat rewrite A in *. simpl in *.
+    destruct arg; [| subst; apply IHC2; try reflexivity; assumption]. destruct (mint ty).
+    + 
+
+    destruct (mint ty).
+    admit. ; [| apply (IHC2 eq_refl H1)]. clear IHC2.
     destruct (fv_slow t) as [| hd tl] eqn:Et; [contradiction |].
     induction H0; invert C2.
 Abort.
@@ -472,7 +561,7 @@ Proof.
       * admit.
       * eapply IHTyped1 in Ey as [f [E1 E2]]. clear IHTyped1; clear IHTyped2.
         erewrite nth_error_short_circuit; [| rewrite nth_error_smap; rewrite E1; reflexivity].
-        eexists; repeat split. intros. apply E2 in H1. simpl. eapply TyPack. Print Typed. econstructor. assumption.
+        eexists; repeat split. intros. apply E2 in H1. simpl. eapply TyPack. econstructor. assumption.
         rewrite nth_error_smap. rewrite E1; reflexivity.
 
     + assert (A : checked_sub (Datatypes.length ctxt) i <> None). { rewrite Ec. intro C. discriminate C. }

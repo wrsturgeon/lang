@@ -178,6 +178,16 @@ Proof.
       * apply eqb_neq in E. subst. constructor. { assumption. } apply IHpost. reflexivity.
 Qed.
 
+Variant MaybeCons {T} (hd : T) : list T -> list T -> Prop :=
+  | MaybeConsNil :
+      MaybeCons hd [] []
+  | MaybeConsCons : forall tl,
+      MaybeCons hd tl (hd :: tl)
+  | MaybeConsNotEq : forall x etc,
+      hd <> x ->
+      MaybeCons hd (x :: etc) (x :: etc)
+  .
+
 Inductive FreeIn : term -> list string -> Prop :=
   | FreeVoid :
       FreeIn TmVoid []
@@ -187,63 +197,24 @@ Inductive FreeIn : term -> list string -> Prop :=
       FreeIn (TmAtom id) []
   | FreeVarS : forall x,
       FreeIn (TmVarS x) [x]
-  | FreePackNone : forall id ty curry va vb v,
+  | FreePack : forall id arg ty curry va vb avb v,
       FreeIn ty va ->
-      FreeIn curry vb ->
+      FreeIn curry avb ->
       va ++ vb = v ->
-      FreeIn (TmPack id None ty curry) v
-  | FreeForANone : forall ty curry va vb v,
+      (match arg with None => eq | Some a => if mint ty then Wherever a else MaybeCons a end) vb avb ->
+      FreeIn (TmPack id arg ty curry) v
+  | FreeForA : forall arg ty curry va vb avb v,
       FreeIn ty va ->
-      FreeIn curry vb ->
+      FreeIn curry avb ->
       va ++ vb = v ->
-      FreeIn (TmForA None ty curry) v
+      (match arg with None => eq | Some a => if mint ty then Wherever a else MaybeCons a end) vb avb ->
+      FreeIn (TmForA arg ty curry) v
   | FreeAppl : forall f x va vb v,
       FreeIn f va ->
       FreeIn x vb ->
       va ++ vb = v ->
       FreeIn (TmAppl f x) v
-  | FreePackMint : forall id arg ty curry va vb avb v,
-      Mint ty ->
-      FreeIn ty va ->
-      FreeIn curry avb ->
-      Wherever arg vb avb ->
-      va ++ vb = v ->
-      FreeIn (TmPack id (Some arg) ty curry) v
-  | FreeForAMint : forall arg ty curry va vb avb v,
-      Mint ty ->
-      FreeIn ty va ->
-      FreeIn curry avb ->
-      Wherever arg vb avb ->
-      va ++ vb = v ->
-      FreeIn (TmForA (Some arg) ty curry) v
-  | FreePackMatch : forall id arg ty curry va vb v,
-      ~Mint ty ->
-      FreeIn ty va ->
-      FreeIn curry (arg :: vb) ->
-      va ++ vb = v ->
-      FreeIn (TmPack id (Some arg) ty curry) v
-  | FreeForAMatch : forall arg ty curry va vb v,
-      ~Mint ty ->
-      FreeIn ty va ->
-      FreeIn curry (arg :: vb) ->
-      va ++ vb = v ->
-      FreeIn (TmForA (Some arg) ty curry) v
-  | FreePackDiff : forall id arg ty curry va vb v,
-      ~Mint ty ->
-      FreeIn ty va ->
-      FreeIn curry vb ->
-      va ++ vb = v ->
-      hd_error vb <> Some arg ->
-      FreeIn (TmPack id (Some arg) ty curry) v
-  | FreeForADiff : forall arg ty curry va vb v,
-      ~Mint ty ->
-      FreeIn ty va ->
-      FreeIn curry vb ->
-      va ++ vb = v ->
-      hd_error vb <> Some arg ->
-      FreeIn (TmForA (Some arg) ty curry) v
   .
-(* TODO: consider making these `Mint`s their Boolean equivalents, since manually calling constructors is a pain in the ass *)
 
 Definition Closed := fun t => FreeIn t [].
 Arguments Closed t/.
@@ -258,35 +229,13 @@ Theorem reflect_fv : forall t v,
   FreeIn t v <-> fv t = v.
 Proof.
   split; intros.
-  - induction H; intros; subst; simpl in *; f_equal.
-    + apply mint_true in H. rewrite H. apply wherever_remove_all. assumption.
-    + apply mint_true in H. rewrite H. apply wherever_remove_all. assumption.
-    + apply mint_false in H. rewrite H. rewrite IHFreeIn2. rewrite eqb_refl. reflexivity.
-    + apply mint_false in H. rewrite H. rewrite IHFreeIn2. rewrite eqb_refl. reflexivity.
-    + apply mint_false in H. rewrite H. destruct (fv_slow curry). { reflexivity. }
-      destruct (eqb arg s) eqn:E. { apply eqb_eq in E. subst. contradiction H3. reflexivity. } reflexivity.
-    + apply mint_false in H. rewrite H. destruct (fv_slow curry). { reflexivity. }
-      destruct (eqb arg s) eqn:E. { apply eqb_eq in E. subst. contradiction H3. reflexivity. } reflexivity.
-  - generalize dependent v. induction t; intros; subst; simpl in *; try solve [constructor].
-    + destruct arg.
-      * destruct (reflect_mint t1). {
-          eapply FreePackMint; [assumption | apply IHt1 | apply IHt2 | apply wherever_remove_all |]; try reflexivity. }
-        destruct (fv_slow t2). {
-          eapply FreePackDiff; [assumption | apply IHt1 | apply IHt2 | |]; try reflexivity. intro C. discriminate C. }
-        destruct (eqb s s0) eqn:E. {
-          apply eqb_eq in E. subst. eapply FreePackMatch; [assumption | apply IHt1 | apply IHt2 |]; reflexivity. }
-        eapply FreePackDiff; [assumption | apply IHt1 | apply IHt2 | |]; try reflexivity.
-        intro C. invert C. rewrite eqb_refl in E. discriminate E.
-      * econstructor; [apply IHt1 | apply IHt2 |]; reflexivity.
-    + destruct arg.
-      * destruct (reflect_mint t1). {
-          eapply FreeForAMint; [assumption | apply IHt1 | apply IHt2 | apply wherever_remove_all |]; try reflexivity. }
-        destruct (fv_slow t2). {
-          eapply FreeForADiff; [assumption | apply IHt1 | apply IHt2 | |]; try reflexivity. intro C. discriminate C. }
-        destruct (eqb s s0) eqn:E. {
-          apply eqb_eq in E. subst. eapply FreeForAMatch; [assumption | apply IHt1 | apply IHt2 |]; reflexivity. }
-        eapply FreeForADiff; [assumption | apply IHt1 | apply IHt2 | |]; try reflexivity.
-        intro C. invert C. rewrite eqb_refl in E. discriminate E.
-      * econstructor; [apply IHt1 | apply IHt2 |]; reflexivity.
-    + econstructor; [apply IHt1 | apply IHt2 |]; reflexivity.
+  - induction H; intros; subst; simpl in *; f_equal;
+    (destruct arg; [| symmetry; assumption]);
+    (destruct (reflect_mint ty); [apply wherever_remove_all; assumption |]);
+    (invert H2; [| rewrite eqb_refl | apply eqb_neq in H4; rewrite H4]); reflexivity.
+  - generalize dependent v. induction t; intros; subst; simpl in *; try solve [constructor];
+    econstructor; try apply IHt1; try apply IHt2; try reflexivity;
+    (destruct arg; [| reflexivity]); (destruct (reflect_mint t1); [apply wherever_remove_all; reflexivity |]);
+    (destruct (fv_slow t2); [constructor |]); (destruct (eqb s s0) eqn:E; [apply eqb_eq in E; subst |]); constructor;
+    apply eqb_neq in E; assumption.
 Qed.
