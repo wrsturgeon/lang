@@ -2,9 +2,9 @@ From Coq Require Export
   Lists.List.
 Export ListNotations.
 From Lang Require Import
-  DupFrom
   Invert
   OptionBind
+  Partition
   Snoc
   Terms.
 
@@ -36,7 +36,7 @@ Fixpoint fv_with rm t :=
       fv_with rm f ++ fv_with rm x
   | TmPack _ arg ty curry
   | TmForA arg ty curry =>
-      dup_from_src_with eqb (fv_with remove_all (* <-- yes, hard-code this *) ty) (
+      partition_src_with eqb (fv_with remove_all (* <-- yes, hard-code this *) ty) (
         let recursed := fv_with rm curry in
         match arg with
         | None => recursed
@@ -182,13 +182,13 @@ Inductive FreeInWith : (string -> list string -> list string -> Prop) -> term ->
   | FreePack : forall cmp id arg ty curry va vb avb v,
       FreeInWith Wherever ty va ->
       FreeInWith cmp curry avb ->
-      DupFrom v va vb ->
+      Partition v va vb ->
       (match arg with None => eq | Some a => cmp a end) vb avb ->
       FreeInWith cmp (TmPack id arg ty curry) v
   | FreeForA : forall cmp arg ty curry va vb avb v,
       FreeInWith Wherever ty va ->
       FreeInWith cmp curry avb ->
-      DupFrom v va vb ->
+      Partition v va vb ->
       (match arg with None => eq | Some a => cmp a end) vb avb ->
       FreeInWith cmp (TmForA arg ty curry) v
   | FreeAppl : forall cmp f x va vb v,
@@ -215,8 +215,9 @@ Theorem reflect_fv_structural : forall t v,
 Proof.
   intros. generalize dependent v. induction t; intros; subst; simpl in *; try solve [constructor];
   [| | econstructor; [apply IHt1 | apply IHt2 |]; reflexivity];
-  destruct arg; (econstructor; [apply IHt1 | apply IHt2 | |]); try reflexivity;
-  try (apply dup_from_src_works; apply eqb_eq); apply wherever_remove_all; reflexivity.
+  destruct arg; (econstructor; [apply IHt1 | apply IHt2 | |]);
+  try reflexivity; try apply wherever_remove_all; try reflexivity;
+  apply partition_src_works; apply eqb_spec.
 Qed.
 
 (* TODO: Nondeterminism of `DupFrom` prevents this from being bidirectional. Look into making `DupFrom` deterministic. *)
@@ -227,5 +228,5 @@ Proof.
   intros. generalize dependent v. induction t; intros; subst; simpl in *; try solve [constructor];
   [| | econstructor; [apply IHt1 | apply IHt2 |]; reflexivity]; destruct arg; (econstructor;
   [apply reflect_fv_structural; reflexivity | apply IHt2; reflexivity | | try reflexivity; apply H]);
-  apply dup_from_src_works; apply eqb_eq.
+  apply partition_src_works; apply eqb_spec.
 Qed.

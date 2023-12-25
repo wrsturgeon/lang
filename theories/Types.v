@@ -3,10 +3,9 @@ From Coq Require Export
   Sorting.Permutation.
 Export ListNotations.
 From Lang Require Import
-  DupFrom
   FreeVariables
   Invert
-  Mint
+  Partition
   Subst
   Terms.
 
@@ -59,53 +58,56 @@ Inductive WhereverKV {K V} k v : list (K * V) -> list (K * V) -> Prop :=
   .
 
 (* Typed extremely strictly, as if on a stack: no exchange, no weakening, no contraction. *)
-Inductive TypedWith : list extension -> judgment :=
-  | TyStar : forall {extn} univ,
-      TypedWith extn [] (TmStar univ) (TmStar (S univ))
-  | TyVarS : forall {extn} id t,
-      TypedWith extn [(id, t)] (TmVarS id) t
-  | TyAtom : forall {extn} id,
-      TypedWith extn [] (TmAtom id) (TmAtom id)
-  | TyPack : forall {extn} ctx ctxt ctxc ctxa id arg ty curry t kind,
+Inductive TypedWith (filter : string -> term -> list (string * term) -> list (string * term) -> Prop) (extn : list extension) : judgment :=
+  | TyStar : forall univ,
+      TypedWith filter extn [] (TmStar univ) (TmStar (S univ))
+  | TyVarS : forall id t,
+      TypedWith filter extn [(id, t)] (TmVarS id) t
+  | TyAtom : forall id,
+      TypedWith filter extn [] (TmAtom id) (TmAtom id)
+  | TyPack : forall ctx ctxt ctxc ctxa id arg ty curry t kind,
       AtomId id curry ->
-      TypedWith extn ctxt ty kind ->
-      TypedWith extn ctxa curry t ->
-      match arg with None => eq | Some a => if mint ty then WhereverKV a ty else MaybeConsKV a ty end ctxc ctxa ->
-      DupFrom ctx ctxt ctxc ->
-      TypedWith extn ctx (TmPack id arg ty curry) (TmForA arg ty t)
-  | TyForA : forall {extn} ctx ctxt ctxc ctxa arg ty body t kind,
-      TypedWith extn ctxt ty kind ->
-      TypedWith extn ctxa body t ->
-      match arg with None => eq | Some a => if mint ty then WhereverKV a ty else MaybeConsKV a ty end ctxc ctxa ->
-      DupFrom ctx ctxt ctxc ->
-      TypedWith extn ctx (TmForA arg ty body) (TmForA arg ty t)
-  | TyAppl : forall {extn} ctx ctxf ctxx f x arg ty body substituted,
-      TypedWith extn ctxf f (TmForA arg ty body) ->
-      TypedWith extn ctxx x ty ->
+      TypedWith WhereverKV extn ctxt ty kind ->
+      TypedWith filter extn ctxa curry t ->
+      match arg with None => eq | Some a => filter a ty end ctxc ctxa ->
+      Partition ctx ctxt ctxc ->
+      TypedWith filter extn ctx (TmPack id arg ty curry) (TmForA arg ty t)
+  | TyForA : forall ctx ctxt ctxc ctxa arg ty body t kind,
+      TypedWith WhereverKV extn ctxt ty kind ->
+      TypedWith filter extn ctxa body t ->
+      match arg with None => eq | Some a => filter a ty end ctxc ctxa ->
+      Partition ctx ctxt ctxc ->
+      TypedWith filter extn ctx (TmForA arg ty body) (TmForA arg ty t)
+  | TyAppl : forall ctx ctxf ctxx f x arg ty body substituted,
+      TypedWith filter extn ctxf f (TmForA arg ty body) ->
+      TypedWith filter extn ctxx x ty ->
       ctxf ++ ctxx = ctx ->
       MaybeSubst arg x body substituted ->
-      TypedWith extn ctx (TmAppl f x) substituted
+      TypedWith filter extn ctx (TmAppl f x) substituted
   (*
   | TyStar : forall ctx t ty,
       Typed ctx t ty ->
       Typed ctx t TmStar
   *)
-  | TyExtn : forall {extn} (E : extension) ctx ctx' t ty,
+  | TyExtn : forall (E : extension) ctx ctx' t ty,
       In E extn ->
       E ctx ctx' ->
-      TypedWith extn ctx' t ty ->
-      TypedWith extn ctx t ty
+      TypedWith filter extn ctx' t ty ->
+      TypedWith filter extn ctx t ty
   .
-Arguments TypedWith extn ctx t ty.
-Arguments TyStar {extn} univ.
-Arguments TyVarS {extn} id t.
-Arguments TyAtom {extn} id.
-Arguments TyPack {extn} ctx ctxt ctxc ctxa id arg ty curry t kind Hatom Hty Hcurry Hbound Hsep.
-Arguments TyForA {extn} ctx ctxt ctxc ctxa    arg ty  body t kind       Hty Hbody  Hbound Hsep.
-Arguments TyAppl {extn} ctx ctxf ctxx f x arg ty body substituted Hf Hx Hcat Hsubst.
-Arguments TyExtn {extn} E ctx ctx' t ty Hin Hextn Hty.
+Arguments TypedWith filter extn ctx t ty.
+Arguments TyStar {filter} {extn} univ.
+Arguments TyVarS {filter} {extn} id t.
+Arguments TyAtom {filter} {extn} id.
+Arguments TyPack {filter} {extn} ctx ctxt ctxc ctxa id arg ty curry t kind Hatom Hty Hcurry Hbound Hsep.
+Arguments TyForA {filter} {extn} ctx ctxt ctxc ctxa    arg ty  body t kind       Hty Hbody  Hbound Hsep.
+Arguments TyAppl {filter} {extn} ctx ctxf ctxx f x arg ty body substituted Hf Hx Hcat Hsubst.
+Arguments TyExtn {filter} {extn} E ctx ctx' t ty Hin Hextn Hty.
 
-Definition Typed := TypedWith [].
+Definition TypedWithExtensions := TypedWith MaybeConsKV.
+Arguments TypedWithExtensions/ extn ctx t ty.
+
+Definition Typed := TypedWithExtensions [].
 Arguments Typed/ ctx t ty.
 
 Ltac typed :=
@@ -143,9 +145,9 @@ Proof.
     + (* dealing with bound variables *)
       simpl. constructor.
     + (* concatenating the contexts used to type the type and the body *)
-      dup_from_take. dup_from_nil.
+      partition_move. partition_done.
   - (* deadling with bound variables *)
-    simpl. constructor. constructor.
+    simpl. constructor.
   - (* concatenating the contexts used to type the type and the body *)
     constructor.
 Qed.
@@ -184,7 +186,7 @@ Proof.
   remember [] as extn eqn:Ex. generalize dependent Ex.
   induction C; intros; subst; simpl in *; try discriminate; try contradiction. invert Et. clear IHC1 IHC2.
   invert C2; [| invert H]. destruct ctxf; [| destruct ctxf; [| destruct ctxf]]; invert Ec.
-  invert C1; [| invert H]. invert H2; [| invert H]. invert H6. invert H3. invert H.
+  invert C1; [| invert H]. invert H2; [| invert H]. invert H5. invert H3. invert H.
 Qed.
 
 (* ...But the above becomes perfectly okay if we add exchange and contraction, i.e., a heap: *)
@@ -197,7 +199,7 @@ Example type_contraction_allows_reuse :
   let tx := ("x"%string, X) in
   let ctx := [tf; tx] in
   let fxx := TmAppl (TmAppl f x) x in
-  TypedWith [contraction; exchange] ctx fxx Y.
+  TypedWithExtensions [contraction; exchange] ctx fxx Y.
 Proof.
   eapply (TyExtn exchange). { right. left. reflexivity. } shelve. (* let Coq come up with the permutation for us *)
   eapply (TyExtn contraction). { left. reflexivity. } shelve.
@@ -226,21 +228,33 @@ Proof. intros. induction H; constructor; assumption. Qed.
 (* If a term `t` is typed in a context, then
  * that context has EXACTLY `fv t`, in order.
  * Fantastic that we can prove something this precise! *)
+Theorem typed_free_in_structural : forall ctx t ty,
+  TypedWith WhereverKV [] ctx t ty -> FreeInWith Wherever t (map fst ctx).
+Proof.
+  intros. remember [] as extn eqn:Ex. generalize dependent Ex. remember WhereverKV as filter eqn:Ef. generalize dependent Ef.
+  induction H; intros; subst; simpl in *; try solve [constructor]; try contradiction H; try destruct arg; subst;
+  econstructor; try apply IHTypedWith1; try apply IHTypedWith2; try reflexivity;
+  try (apply partition_map_fst; try apply H3; apply H2);
+  try (eapply wherever_fst; try apply H2; apply H1);
+  symmetry; apply map_distr.
+Qed.
+
+(* If a term `t` is typed in a context, then
+ * that context has EXACTLY `fv t`, in order.
+ * Fantastic that we can prove something this precise! *)
 Theorem typed_free_in : forall ctx t ty,
   Typed ctx t ty -> FreeIn t (map fst ctx).
 Proof.
   intros. simpl in *. remember [] as extn eqn:Ex. generalize dependent Ex.
-  induction H; intros; subst; simpl in *; try solve [constructor]; try contradiction H;
-  repeat rewrite map_distr in *; try (destruct arg; subst);
-  destruct (mint ty) eqn:Em; econstructor; try apply IHTypedWith1; try apply IHTypedWith2; try reflexivity;
-  try rewrite Em; try eapply wherever_fst; try eapply maybe_cons_fst; try apply H2; try apply H1.
-
-  induction H; intros; subst; simpl in *; try solve [constructor]; try contradiction H;
-  repeat rewrite map_distr in *; try (destruct arg; subst);
-  destruct (mint ty) eqn:Em; econstructor; try apply IHTypedWith1; try apply IHTypedWith2; try reflexivity;
-  rewrite Em; try eapply wherever_fst; try eapply maybe_cons_fst; try apply H2; apply H1.
+  remember MaybeConsKV as filter eqn:Ef. generalize dependent Ef.
+  induction H; intros; subst; simpl in *; try solve [constructor]; try contradiction H; econstructor;
+  try (eapply typed_free_in_structural; try apply H0; apply H);
+  try apply IHTypedWith1; try apply IHTypedWith2; try reflexivity;
+  try (apply partition_map_fst; try apply H3; apply H2); try (symmetry; apply map_distr);
+  (destruct arg; subst; [| reflexivity]); eapply maybe_cons_fst; try apply H2; apply H1.
 Qed.
 
+(*
 Theorem fv_not_typed : forall t,
   fv t <> [] -> ~exists ty, Typed [] t ty.
 Proof.
@@ -628,3 +642,4 @@ Proof.
 
   - destruct (eqb x id) eqn:E; invert H0. apply eqb_eq in E. subst. induction H.
 Qed.
+*)
