@@ -17,6 +17,10 @@ Proof.
   rewrite IHpre. reflexivity.
 Qed.
 
+Lemma snoc_app_tl : forall {T} (x : T) li,
+  snoc x li = li ++ [x].
+Proof. intros. generalize dependent x. induction li; intros; simpl; [| rewrite IHli]; reflexivity. Qed.
+
 Fixpoint desnoc {T} (li : list T) :=
   match li with
   | [] => None

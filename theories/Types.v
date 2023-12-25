@@ -3,6 +3,7 @@ From Coq Require Export
   Sorting.Permutation.
 Export ListNotations.
 From Lang Require Import
+  DupFrom
   FreeVariables
   Invert
   Mint
@@ -57,39 +58,6 @@ Inductive WhereverKV {K V} k v : list (K * V) -> list (K * V) -> Prop :=
       WhereverKV k v ((hdk, hdv) :: a) ((hdk, hdv) :: b)
   .
 
-(* note that this is nondeterministic: no head non-equality check *)
-Inductive Remove {T} x : list T -> list T -> Prop :=
-  | RemoveHead : forall tl,
-      Remove x (x :: tl) tl
-  | RemoveSkip : forall hd tl tl',
-      Remove x tl tl' ->
-      Remove x (hd :: tl) (hd :: tl')
-  .
-
-Inductive DupFrom {T} : list T -> list T -> list T -> Prop :=
-  | DupFromNil : forall src,
-      DupFrom src [] src
-  | DupFromCopy : forall hd tl src src',
-      In hd src ->
-      DupFrom src tl src' ->
-      DupFrom src (hd :: tl) src'
-  | DupFromTake : forall hd tl src src' src'',
-      Remove hd src src' ->
-      DupFrom src' tl src'' ->
-      DupFrom src (hd :: tl) src''
-  .
-Ltac dup_from_nil := apply DupFromNil.
-Ltac dup_from_copy := eapply DupFromCopy; [repeat (try (left; reflexivity); right) |].
-Ltac dup_from_take := eapply DupFromTake; [repeat constructor |].
-
-Example dup_from_12345 : DupFrom [1;2;3;4;5] [1;1;1;1;1;1;4;2;5;3;3] [1;3;5].
-Proof.
-  dup_from_copy. dup_from_copy. dup_from_copy. dup_from_copy. dup_from_copy. dup_from_copy.
-  dup_from_take. dup_from_take. dup_from_copy. dup_from_copy. dup_from_copy. dup_from_nil.
-Qed.
-
-(* TODO: Use `DupFrom` to separate type-typing context and body-typing context. *)
-
 (* Typed extremely strictly, as if on a stack: no exchange, no weakening, no contraction. *)
 Inductive TypedWith : list extension -> judgment :=
   | TyStar : forall {extn} univ,
@@ -103,13 +71,13 @@ Inductive TypedWith : list extension -> judgment :=
       TypedWith extn ctxt ty kind ->
       TypedWith extn ctxa curry t ->
       match arg with None => eq | Some a => if mint ty then WhereverKV a ty else MaybeConsKV a ty end ctxc ctxa ->
-      ctxt ++ ctxc = ctx ->
+      DupFrom ctx ctxt ctxc ->
       TypedWith extn ctx (TmPack id arg ty curry) (TmForA arg ty t)
   | TyForA : forall {extn} ctx ctxt ctxc ctxa arg ty body t kind,
       TypedWith extn ctxt ty kind ->
       TypedWith extn ctxa body t ->
       match arg with None => eq | Some a => if mint ty then WhereverKV a ty else MaybeConsKV a ty end ctxc ctxa ->
-      ctxt ++ ctxc = ctx ->
+      DupFrom ctx ctxt ctxc ->
       TypedWith extn ctx (TmForA arg ty body) (TmForA arg ty t)
   | TyAppl : forall {extn} ctx ctxf ctxx f x arg ty body substituted,
       TypedWith extn ctxf f (TmForA arg ty body) ->
@@ -132,13 +100,22 @@ Arguments TypedWith extn ctx t ty.
 Arguments TyStar {extn} univ.
 Arguments TyVarS {extn} id t.
 Arguments TyAtom {extn} id.
-Arguments TyPack {extn} ctx ctxt ctxc ctxa id arg ty curry t kind Hatom Hty Hcurry Hbound Hcat.
-Arguments TyForA {extn} ctx ctxt ctxc ctxa    arg ty  body t kind       Hty Hbody  Hbound Hcat.
+Arguments TyPack {extn} ctx ctxt ctxc ctxa id arg ty curry t kind Hatom Hty Hcurry Hbound Hsep.
+Arguments TyForA {extn} ctx ctxt ctxc ctxa    arg ty  body t kind       Hty Hbody  Hbound Hsep.
 Arguments TyAppl {extn} ctx ctxf ctxx f x arg ty body substituted Hf Hx Hcat Hsubst.
 Arguments TyExtn {extn} E ctx ctx' t ty Hin Hextn Hty.
 
 Definition Typed := TypedWith [].
 Arguments Typed/ ctx t ty.
+
+Ltac typed :=
+  try eapply TyStar;
+  try eapply TyVarS;
+  try eapply TyAtom;
+  try (eapply TyPack; [repeat econstructor | typed | typed | try reflexivity; try apply MaybeConsKVCons; try apply MaybeConsKVNil |]);
+  try (eapply TyForA; [typed | typed | try reflexivity; try apply MaybeConsKVCons; try apply MaybeConsKVNil |]);
+  try (eapply TyAppl; [typed | typed | reflexivity | econstructor]);
+  simpl in *.
 
 (* TODO: CRUCIAL SAFETY THEOREMS: (1) Star n does not have type Star n, and (2) no term has type Void. *)
 
@@ -153,6 +130,7 @@ Arguments polymorphic_identity_ty/.
 Theorem dependent_types_woohoo :
   Typed [] polymorphic_identity_fn polymorphic_identity_ty.
 Proof.
+  (* typed. { dup_from_take. dup_from_nil. } { repeat constructor. } dup_from_nil. *)
   simpl. eapply TyForA.
   - (* typing `TmStar` *)
     apply TyStar.
@@ -165,11 +143,11 @@ Proof.
     + (* dealing with bound variables *)
       simpl. constructor.
     + (* concatenating the contexts used to type the type and the body *)
-      simpl. reflexivity.
+      dup_from_take. dup_from_nil.
   - (* deadling with bound variables *)
     simpl. constructor. constructor.
   - (* concatenating the contexts used to type the type and the body *)
-    reflexivity.
+    constructor.
 Qed.
 
 (* Showing that, given f: X -> Y and x: X, we can type (f x) : Y. *)
@@ -252,6 +230,11 @@ Theorem typed_free_in : forall ctx t ty,
   Typed ctx t ty -> FreeIn t (map fst ctx).
 Proof.
   intros. simpl in *. remember [] as extn eqn:Ex. generalize dependent Ex.
+  induction H; intros; subst; simpl in *; try solve [constructor]; try contradiction H;
+  repeat rewrite map_distr in *; try (destruct arg; subst);
+  destruct (mint ty) eqn:Em; econstructor; try apply IHTypedWith1; try apply IHTypedWith2; try reflexivity;
+  try rewrite Em; try eapply wherever_fst; try eapply maybe_cons_fst; try apply H2; try apply H1.
+
   induction H; intros; subst; simpl in *; try solve [constructor]; try contradiction H;
   repeat rewrite map_distr in *; try (destruct arg; subst);
   destruct (mint ty) eqn:Em; econstructor; try apply IHTypedWith1; try apply IHTypedWith2; try reflexivity;

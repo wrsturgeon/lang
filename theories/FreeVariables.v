@@ -2,8 +2,8 @@ From Coq Require Export
   Lists.List.
 Export ListNotations.
 From Lang Require Import
+  DupFrom
   Invert
-  Mint
   OptionBind
   Snoc
   Terms.
@@ -24,7 +24,7 @@ Definition remove_if_head x li :=
   end.
 Arguments remove_if_head/ x li.
 
-Fixpoint fv_slow t :=
+Fixpoint fv_with rm t :=
   match t with
   | TmVoid
   | TmStar _
@@ -33,34 +33,37 @@ Fixpoint fv_slow t :=
   | TmVarS s =>
       [s]
   | TmAppl f x =>
-      fv_slow f ++ fv_slow x
+      fv_with rm f ++ fv_with rm x
   | TmPack _ arg ty curry
   | TmForA arg ty curry =>
-      fv_slow ty ++ (
-        let recursed := fv_slow curry in
+      dup_from_src_with eqb (fv_with remove_all (* <-- yes, hard-code this *) ty) (
+        let recursed := fv_with rm curry in
         match arg with
         | None => recursed
-        | Some a => (if mint ty then remove_all else remove_if_head) a recursed
+        | Some a => rm a recursed
         end)
   end.
+Definition fv := fv_with remove_if_head.
+Arguments fv/ t.
 
 (* Crucial distinction from an easier-to-implement algorithm! *)
-Example fv_slow_permits_shadowing : forall x,
+Example fv_permits_shadowing : forall x,
   (* Equivalent to `\x. \x. x x`, where the `x`s are distinct and pushed/popped in order. *)
-  fv_slow (TmForA (Some x) TmVoid (TmForA (Some x) TmVoid (TmAppl (TmVarS x) (TmVarS x)))) = [].
+  fv (TmForA (Some x) TmVoid (TmForA (Some x) TmVoid (TmAppl (TmVarS x) (TmVarS x)))) = [].
 Proof. intros. simpl. repeat rewrite eqb_refl. reflexivity. Qed.
 
 (* Crucial distinction from an easier-to-implement algorithm! *)
-Example fv_slow_permits_interrupted_shadowing : forall x y, y <> x ->
+Example fv_permits_interrupted_shadowing : forall x y, y <> x ->
   (* Equivalent to `\x. \y. \x. x x`, where the `x`s are distinct and pushed/popped in order. *)
-  fv_slow (TmForA (Some x) TmVoid (TmForA (Some y) TmVoid (TmForA (Some x) TmVoid (TmAppl (TmVarS x) (TmVarS x))))) = [].
-Proof. intros. apply eqb_neq in H. simpl. rewrite eqb_refl. reflexivity. Qed.
+  fv (TmForA (Some x) TmVoid (TmForA (Some y) TmVoid (TmForA (Some x) TmVoid (TmAppl (TmVarS x) (TmVarS x))))) = [].
+Proof. intros. apply eqb_neq in H. simpl. rewrite eqb_refl. rewrite H. rewrite eqb_refl. reflexivity. Qed.
 
-Example fv_slow_respects_scope : forall x,
+Example fv_respects_scope : forall x,
   (* Equivalent to `(\x:0. 0) x`, in which the outer `x` is still free *)
-  fv_slow (TmAppl (TmForA (Some x) TmVoid TmVoid) (TmVarS x)) = [x].
+  fv (TmAppl (TmForA (Some x) TmVoid TmVoid) (TmVarS x)) = [x].
 Proof. intros. simpl. reflexivity. Qed.
 
+(*
 Fixpoint fv_fast acc t :=
   match t with
   | TmVoid
@@ -95,7 +98,6 @@ Example fv_fast_respects_scope : forall x,
   fv_fast [] (TmAppl (TmForA (Some x) TmVoid TmVoid) (TmVarS x)) = [x].
 Proof. intros. simpl. Abort.
 
-(*
 Theorem fv_fast_slow_eq : forall t,
   fv_slow t = rev (snd (fv_fast [] [] t)).
 Proof.
@@ -107,26 +109,6 @@ Qed.
 
 Definition fv := fv_fast [].
 *)
-
-Definition fv := fv_slow.
-Arguments fv/ t.
-
-(* Crucial distinction from an easier-to-implement algorithm! *)
-Example fv_permits_shadowing : forall x,
-  (* Equivalent to `\x. \x. x x`, where the `x`s are distinct and pushed/popped in order. *)
-  fv (TmForA (Some x) TmVoid (TmForA (Some x) TmVoid (TmAppl (TmVarS x) (TmVarS x)))) = [].
-Proof. intros. simpl. repeat rewrite eqb_refl. reflexivity. Qed.
-
-(* Crucial distinction from an easier-to-implement algorithm! *)
-Example fv_permits_interrupted_shadowing : forall x y, y <> x ->
-  (* Equivalent to `\x. \y. \x. x x`, where the `x`s are distinct and pushed/popped in order. *)
-  fv (TmForA (Some x) TmVoid (TmForA (Some y) TmVoid (TmForA (Some x) TmVoid (TmAppl (TmVarS x) (TmVarS x))))) = [].
-Proof. intros. apply eqb_neq in H. simpl. rewrite eqb_refl. reflexivity. Qed.
-
-Example fv_respects_scope : forall x,
-  (* Equivalent to `(\x:0. 0) x`, in which the outer `x` is still free *)
-  fv (TmAppl (TmForA (Some x) TmVoid TmVoid) (TmVarS x)) = [x].
-Proof. intros. simpl. reflexivity. Qed.
 
 Inductive Wherever {T} (x : T) : list T -> list T -> Prop :=
   | WhereverNil :
@@ -188,33 +170,35 @@ Variant MaybeCons {T} (hd : T) : list T -> list T -> Prop :=
       MaybeCons hd (x :: etc) (x :: etc)
   .
 
-Inductive FreeIn : term -> list string -> Prop :=
-  | FreeVoid :
-      FreeIn TmVoid []
-  | FreeStar : forall univ,
-      FreeIn (TmStar univ) []
-  | FreeAtom : forall id,
-      FreeIn (TmAtom id) []
-  | FreeVarS : forall x,
-      FreeIn (TmVarS x) [x]
-  | FreePack : forall id arg ty curry va vb avb v,
-      FreeIn ty va ->
-      FreeIn curry avb ->
+Inductive FreeInWith : (string -> list string -> list string -> Prop) -> term -> list string -> Prop :=
+  | FreeVoid : forall cmp,
+      FreeInWith cmp TmVoid []
+  | FreeStar : forall cmp univ,
+      FreeInWith cmp (TmStar univ) []
+  | FreeAtom : forall cmp id,
+      FreeInWith cmp (TmAtom id) []
+  | FreeVarS : forall cmp x,
+      FreeInWith cmp (TmVarS x) [x]
+  | FreePack : forall cmp id arg ty curry va vb avb v,
+      FreeInWith Wherever ty va ->
+      FreeInWith cmp curry avb ->
+      DupFrom v va vb ->
+      (match arg with None => eq | Some a => cmp a end) vb avb ->
+      FreeInWith cmp (TmPack id arg ty curry) v
+  | FreeForA : forall cmp arg ty curry va vb avb v,
+      FreeInWith Wherever ty va ->
+      FreeInWith cmp curry avb ->
+      DupFrom v va vb ->
+      (match arg with None => eq | Some a => cmp a end) vb avb ->
+      FreeInWith cmp (TmForA arg ty curry) v
+  | FreeAppl : forall cmp f x va vb v,
+      FreeInWith cmp f va ->
+      FreeInWith cmp x vb ->
       va ++ vb = v ->
-      (match arg with None => eq | Some a => if mint ty then Wherever a else MaybeCons a end) vb avb ->
-      FreeIn (TmPack id arg ty curry) v
-  | FreeForA : forall arg ty curry va vb avb v,
-      FreeIn ty va ->
-      FreeIn curry avb ->
-      va ++ vb = v ->
-      (match arg with None => eq | Some a => if mint ty then Wherever a else MaybeCons a end) vb avb ->
-      FreeIn (TmForA arg ty curry) v
-  | FreeAppl : forall f x va vb v,
-      FreeIn f va ->
-      FreeIn x vb ->
-      va ++ vb = v ->
-      FreeIn (TmAppl f x) v
+      FreeInWith cmp (TmAppl f x) v
   .
+Definition FreeIn := FreeInWith MaybeCons.
+Arguments FreeIn/ t vs.
 
 Definition Closed := fun t => FreeIn t [].
 Arguments Closed t/.
@@ -225,17 +209,23 @@ Proof.
   induction hd; intros; simpl in *; try rewrite IHhd; reflexivity.
 Qed.
 
-Theorem reflect_fv : forall t v,
-  FreeIn t v <-> fv t = v.
+(* TODO: Nondeterminism of `DupFrom` prevents this from being bidirectional. Look into making `DupFrom` deterministic. *)
+Theorem reflect_fv_structural : forall t v,
+  fv_with remove_all t = v -> FreeInWith Wherever t v.
 Proof.
-  split; intros.
-  - induction H; intros; subst; simpl in *; f_equal;
-    (destruct arg; [| symmetry; assumption]);
-    (destruct (reflect_mint ty); [apply wherever_remove_all; assumption |]);
-    (invert H2; [| rewrite eqb_refl | apply eqb_neq in H4; rewrite H4]); reflexivity.
-  - generalize dependent v. induction t; intros; subst; simpl in *; try solve [constructor];
-    econstructor; try apply IHt1; try apply IHt2; try reflexivity;
-    (destruct arg; [| reflexivity]); (destruct (reflect_mint t1); [apply wherever_remove_all; reflexivity |]);
-    (destruct (fv_slow t2); [constructor |]); (destruct (eqb s s0) eqn:E; [apply eqb_eq in E; subst |]); constructor;
-    apply eqb_neq in E; assumption.
+  intros. generalize dependent v. induction t; intros; subst; simpl in *; try solve [constructor];
+  [| | econstructor; [apply IHt1 | apply IHt2 |]; reflexivity];
+  destruct arg; (econstructor; [apply IHt1 | apply IHt2 | |]); try reflexivity;
+  try (apply dup_from_src_works; apply eqb_eq); apply wherever_remove_all; reflexivity.
+Qed.
+
+(* TODO: Nondeterminism of `DupFrom` prevents this from being bidirectional. Look into making `DupFrom` deterministic. *)
+Theorem reflect_fv : forall Cmp cmp t v,
+  (forall a b, Cmp a (cmp a b) b) ->
+  fv_with cmp t = v -> FreeInWith Cmp t v.
+Proof.
+  intros. generalize dependent v. induction t; intros; subst; simpl in *; try solve [constructor];
+  [| | econstructor; [apply IHt1 | apply IHt2 |]; reflexivity]; destruct arg; (econstructor;
+  [apply reflect_fv_structural; reflexivity | apply IHt2; reflexivity | | try reflexivity; apply H]);
+  apply dup_from_src_works; apply eqb_eq.
 Qed.
