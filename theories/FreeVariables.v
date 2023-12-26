@@ -221,17 +221,35 @@ Proof.
   - remember Wherever as cmp eqn:Ec. generalize dependent Ec.
     induction H; intros; subst; simpl in *; try reflexivity;
     specialize (IHFreeInWith1 eq_refl); specialize (IHFreeInWith2 eq_refl);
-    try destruct arg; subst; simpl in *; try reflexivity; repeat rewrite wherever_remove_all in *; subst.
-    (* TODO: The only thing left at this point is (false) determinism of `Partition`/`partition_src`. *)
-    (* TODO: Maybe guarantee the count of each variable but not the exact order? *)
+    try destruct arg; subst; simpl in *; try reflexivity; repeat rewrite wherever_remove_all in *; subst;
+    (eapply partition_deterministic; [| apply H1]); apply partition_src_works; apply eqb_spec.
 Qed.
 
 Theorem reflect_fv : forall Cmp cmp t v,
-  (forall a b, Cmp a (cmp a b) b) ->
+  (forall a b z, Cmp a z b <-> cmp a b = z) ->
   (fv_with cmp t = v <-> FreeInWith Cmp t v).
 Proof.
-  intros. generalize dependent v. induction t; intros; subst; simpl in *; try solve [constructor];
-  [| | econstructor; [apply IHt1 | apply IHt2 |]; reflexivity]; destruct arg; (econstructor;
-  [apply reflect_fv_structural; reflexivity | apply IHt2; reflexivity | | try reflexivity; apply H]);
-  apply partition_src_works; apply eqb_spec.
+  split; intros.
+  - generalize dependent Cmp. generalize dependent cmp. generalize dependent v.
+    induction t; intros; subst; simpl in *; try solve [constructor];
+    [| | econstructor; [eapply IHt1; [| apply H] | eapply IHt2; [| apply H] |]; reflexivity];
+    destruct arg; (econstructor; [
+      apply reflect_fv_structural |
+      eapply IHt2; [| apply H] |
+      apply partition_src_works; apply eqb_spec |]);
+    try reflexivity; apply H; reflexivity.
+  - generalize dependent cmp. induction H0; intros; subst; simpl in *; try reflexivity.
+    + destruct arg.
+      * rewrite IHFreeInWith1; [| intros; apply wherever_remove_all]. rewrite IHFreeInWith2; [| assumption].
+        eapply partition_deterministic. { apply partition_src_works. apply eqb_spec. }
+        subst. apply H1 in H0. rewrite H0. assumption.
+      * rewrite IHFreeInWith1; [| intros; apply wherever_remove_all; reflexivity]. rewrite IHFreeInWith2; [| assumption].
+        eapply partition_deterministic. { apply partition_src_works. apply eqb_spec. } subst. assumption.
+    + destruct arg.
+      * rewrite IHFreeInWith1; [| intros; apply wherever_remove_all]. rewrite IHFreeInWith2; [| assumption].
+        eapply partition_deterministic. { apply partition_src_works. apply eqb_spec. }
+        subst. apply H1 in H0. rewrite H0. assumption.
+      * rewrite IHFreeInWith1; [| intros; apply wherever_remove_all; reflexivity]. rewrite IHFreeInWith2; [| assumption].
+        eapply partition_deterministic. { apply partition_src_works. apply eqb_spec. } subst. assumption.
+    + rewrite IHFreeInWith1; [| apply H0]. rewrite IHFreeInWith2; [| apply H0]. reflexivity.
 Qed.
