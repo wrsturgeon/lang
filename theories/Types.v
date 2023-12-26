@@ -254,12 +254,12 @@ Proof.
   (destruct arg; subst; [| reflexivity]); eapply maybe_cons_fst; try apply H2; apply H1.
 Qed.
 
-(*
 Theorem fv_not_typed : forall t,
   fv t <> [] -> ~exists ty, Typed [] t ty.
 Proof.
-  intros t H [ty C]. apply typed_free_in in C. apply reflect_fv in C.
-  rewrite C in H. contradiction H. reflexivity.
+  intros t H [ty C]. destruct (fv t) eqn:Ef. { apply H. reflexivity. } clear H. eapply reflect_fv in Ef.
+  - apply typed_free_in in C. simpl in *.
+  Search remove_if_head.
 Qed.
 
 Theorem typed_fv : forall ctx t ty,
@@ -267,7 +267,7 @@ Theorem typed_fv : forall ctx t ty,
   fv t = map fst ctx.
 Proof. intros. apply reflect_fv. eapply typed_free_in. apply H. Qed.
 
-Theorem fv_type_not_typed : forall ty,
+Theorem fv_type_not_typed : forall ty hd tl,
   fv ty <> [] -> ~exists t, Typed [] t ty.
 Proof.
   intros ty H [t C]. generalize dependent H. remember [] as ctx eqn:Ec. generalize dependent Ec.
@@ -642,4 +642,3 @@ Proof.
 
   - destruct (eqb x id) eqn:E; invert H0. apply eqb_eq in E. subst. induction H.
 Qed.
-*)

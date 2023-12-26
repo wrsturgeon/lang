@@ -22,7 +22,7 @@ Definition remove_if_head x li :=
   | [] => []
   | hd :: tl => if eqb x hd then tl else li
   end.
-Arguments remove_if_head/ x li.
+Arguments remove_if_head x/ li.
 
 Fixpoint fv_with rm t :=
   match t with
@@ -209,21 +209,26 @@ Proof.
   induction hd; intros; simpl in *; try rewrite IHhd; reflexivity.
 Qed.
 
-(* TODO: Nondeterminism of `DupFrom` prevents this from being bidirectional. Look into making `DupFrom` deterministic. *)
 Theorem reflect_fv_structural : forall t v,
-  fv_with remove_all t = v -> FreeInWith Wherever t v.
+  fv_with remove_all t = v <-> FreeInWith Wherever t v.
 Proof.
-  intros. generalize dependent v. induction t; intros; subst; simpl in *; try solve [constructor];
-  [| | econstructor; [apply IHt1 | apply IHt2 |]; reflexivity];
-  destruct arg; (econstructor; [apply IHt1 | apply IHt2 | |]);
-  try reflexivity; try apply wherever_remove_all; try reflexivity;
-  apply partition_src_works; apply eqb_spec.
+  split; intros.
+  - generalize dependent v. induction t; intros; subst; simpl in *; try solve [constructor];
+    [| | econstructor; [apply IHt1 | apply IHt2 |]; reflexivity];
+    destruct arg; (econstructor; [apply IHt1 | apply IHt2 | |]);
+    try reflexivity; try apply wherever_remove_all; try reflexivity;
+    apply partition_src_works; apply eqb_spec.
+  - remember Wherever as cmp eqn:Ec. generalize dependent Ec.
+    induction H; intros; subst; simpl in *; try reflexivity;
+    specialize (IHFreeInWith1 eq_refl); specialize (IHFreeInWith2 eq_refl);
+    try destruct arg; subst; simpl in *; try reflexivity; repeat rewrite wherever_remove_all in *; subst.
+    (* TODO: The only thing left at this point is (false) determinism of `Partition`/`partition_src`. *)
+    (* TODO: Maybe guarantee the count of each variable but not the exact order? *)
 Qed.
 
-(* TODO: Nondeterminism of `DupFrom` prevents this from being bidirectional. Look into making `DupFrom` deterministic. *)
 Theorem reflect_fv : forall Cmp cmp t v,
   (forall a b, Cmp a (cmp a b) b) ->
-  fv_with cmp t = v -> FreeInWith Cmp t v.
+  (fv_with cmp t = v <-> FreeInWith Cmp t v).
 Proof.
   intros. generalize dependent v. induction t; intros; subst; simpl in *; try solve [constructor];
   [| | econstructor; [apply IHt1 | apply IHt2 |]; reflexivity]; destruct arg; (econstructor;

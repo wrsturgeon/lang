@@ -8,6 +8,7 @@
 **/.direnv/
 **/.DS_Store
 **/.filestoinstall
+**/.lia.cache
 **/_CoqProject
 **/extracted/
 **/Makefile.coq
