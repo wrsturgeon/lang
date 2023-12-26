@@ -154,34 +154,6 @@ Proof.
   apply (IHli _ t).
 Qed.
 
-Lemma has_fst_or : forall {T} x a b,
-  existsb (fst_cmp x) (partition_src_with fst_cmp a b) =
-  orb (existsb (fst_cmp x) a) (existsb (@fst_cmp string T x) b).
-Proof.
-  intros T x a. generalize dependent x. induction a; intros; simpl in *. { reflexivity. }
-  rewrite <- Bool.orb_assoc. destruct (existsb (fst_cmp a) a0) eqn:Ea; simpl in *; rewrite IHa; (
-    destruct (existsb (fst_cmp x) a0 || existsb (fst_cmp x) b)%bool eqn:E;
-    [rewrite Bool.orb_true_r; reflexivity | rewrite Bool.orb_false_r]); [| reflexivity].
-  destruct x. destruct a. unfold fst_cmp in *. simpl in *. destruct (eqb_spec s s1); [| reflexivity].
-  subst. apply Bool.orb_false_iff in E as [E1 E2]. rewrite Ea in E1. discriminate E1.
-Qed.
-
-Lemma dup_from_src_fst : forall {T} a b,
-  map fst (partition_src_with fst_cmp a b) = partition_src_with eqb (map (@fst _ T) a) (map fst b).
-Proof.
-  intros T a. induction a; intros; simpl in *. { reflexivity. }
-  destruct a. simpl in *. rewrite has_cmp_fst.
-  destruct (existsb (eqb s) (map fst a0)) eqn:Ed; simpl in *; [| f_equal]; apply IHa.
-Qed.
-
-Lemma dup_from_src_nil_exists : forall {T} a b, exists pre,
-  partition_src_with (@fst_cmp _ T) a b = pre ++ b.
-Proof.
-  induction a; intros; simpl in *. { exists []. reflexivity. }
-  destruct (existsb (fst_cmp a) a0) eqn:E. { apply IHa. }
-  destruct (IHa b) as [x H]. exists (a :: x). rewrite H. reflexivity.
-Qed.
-
 Fixpoint set_diff {T} (a b : list (string * T)) :=
   match a with
   | [] => []
@@ -201,13 +173,14 @@ Qed.
 Theorem partition_src_app : forall {T} (a b : list (string * T)),
   partition_src_with fst_cmp a b = set_diff a b ++ b.
 Admitted.
+(* TODO: ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ *)
 
 Theorem grand_unified_subst_structural_fv : forall t,
   fv_with remove_all t = map fst (grand_unified_subst_with remove_key_all t).
 Proof.
   induction t; intros; subst; simpl in *; try reflexivity;
   repeat rewrite IHt1; repeat rewrite IHt2; [| | repeat rewrite map_distr; repeat rewrite map_fst_smap; reflexivity];
-  destruct arg; repeat rewrite <- remove_all_key_eq; rewrite dup_from_src_fst; repeat rewrite map_fst_smap; reflexivity.
+  destruct arg; repeat rewrite <- remove_all_key_eq; erewrite map_fst_partition_src; repeat rewrite map_fst_smap; reflexivity.
 Qed.
 
 Theorem grand_unified_subst_fv : forall t,
@@ -215,7 +188,8 @@ Theorem grand_unified_subst_fv : forall t,
 Proof.
   induction t; intros; subst; simpl in *; try reflexivity;
   repeat rewrite IHt1; repeat rewrite IHt2; [| | rewrite map_distr; repeat rewrite map_fst_smap; reflexivity];
-  rewrite dup_from_src_fst; repeat rewrite map_fst_smap; rewrite grand_unified_subst_structural_fv;
+  (erewrite map_fst_partition_src; [| unfold fst_cmp; simpl; reflexivity]);
+  repeat rewrite map_fst_smap; rewrite grand_unified_subst_structural_fv;
   (destruct arg; [| reflexivity]); (destruct (grand_unified_subst_with remove_key_if_head t2) eqn:Eg; [reflexivity |]);
   destruct p; simpl in *; (destruct (eqb s s0); reflexivity).
 Qed.
@@ -310,14 +284,6 @@ Proof.
   destruct a. destruct (eqb_spec s s0). { subst. unfold fst_cmp. simpl. rewrite eqb_refl. reflexivity. }
   simpl. rewrite (has_remove_key_all (s, t) (s0, t0)). 2: { unfold fst_cmp. simpl. apply eqb_neq. assumption. }
   unfold fst_cmp. simpl. apply eqb_neq in n. rewrite n. apply (IHli _ t).
-Qed.
-
-Lemma dup_with_src_fst_app_exists : forall {T} a b, exists pre,
-  @partition_src_with (string * T) fst_cmp a b = pre ++ b.
-Proof.
-  induction a; intros; simpl in *. { exists []. reflexivity. }
-  destruct (IHa b) as [x H]. rewrite H. destruct (existsb (fst_cmp a) a0);
-  [exists x | exists (a :: x); simpl; f_equal]; reflexivity.
 Qed.
 
 Theorem grand_unified_subst_structural_id : forall t,

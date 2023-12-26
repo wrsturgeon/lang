@@ -225,6 +225,7 @@ Lemma wherever_fst : forall {A B} f s li post,
   @Wherever   A   s     (map fst li) (map fst post).
 Proof. intros. induction H; constructor; assumption. Qed.
 
+(*
 (* If a term `t` is typed in a context, then
  * that context has EXACTLY `fv t`, in order.
  * Fantastic that we can prove something this precise! *)
@@ -642,3 +643,4 @@ Proof.
 
   - destruct (eqb x id) eqn:E; invert H0. apply eqb_eq in E. subst. induction H.
 Qed.
+*)
