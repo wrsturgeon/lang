@@ -83,8 +83,6 @@ Proof.
     destruct p. destruct (eqb x s1); [right |]; right; assumption.
 Qed.
 
-Definition fst_cmp {A B} := fun (a : string * A) (b : string * B) => eqb (fst a) (fst b).
-
 (* Ludicrous that this is the easiest correct definition to write.
  * Generates substitution functions for every free variable at once. *)
 Fixpoint grand_unified_subst_with rm t : list (string * (term -> term)) :=
@@ -145,35 +143,6 @@ Example grand_unified_subst_lambda :
     (* ignore the first `x`, since it's bound, then *)
     ("x", fun x => TmForA (Some "x") (TmVarS "T") (TmAppl (TmVarS "x") x))]%string.
 Proof. reflexivity. Qed.
-
-Lemma has_cmp_fst : forall {T} li s t,
-  existsb (@fst_cmp T T (s, t)) li = existsb (eqb s) (map fst li).
-Proof.
-  intros T li. induction li; intros; simpl in *. { reflexivity. }
-  destruct a. unfold fst_cmp. simpl in *. destruct (eqb s s0). { reflexivity. }
-  apply (IHli _ t).
-Qed.
-
-Fixpoint set_diff {T} (a b : list (string * T)) :=
-  match a with
-  | [] => []
-  | hd :: tl =>
-      let recursed := set_diff tl b in
-      if existsb (fst_cmp hd) b then recursed else hd :: recursed
-  end.
-
-Theorem incl_set_diff : forall {T} (a b : list (string * T)),
-  incl (set_diff a b) a.
-Proof.
-  unfold incl. induction a; intros; simpl in *. { destruct H. }
-  destruct (existsb (fst_cmp a) b) eqn:E. { right. eapply IHa. apply H. }
-  destruct H. { left. assumption. } right. eapply IHa. apply H.
-Qed.
-
-Theorem partition_src_app : forall {T} (a b : list (string * T)),
-  partition_src_with fst_cmp a b = set_diff a b ++ b.
-Admitted.
-(* TODO: ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ *)
 
 Theorem grand_unified_subst_structural_fv : forall t,
   fv_with remove_all t = map fst (grand_unified_subst_with remove_key_all t).

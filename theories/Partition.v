@@ -209,3 +209,39 @@ Theorem partition_map_fst : forall {A B} f f' hi lo,
 Proof.
   intros. erewrite map_fst_partition_src. { apply partition_src_works. apply X. } assumption.
 Qed.
+
+Definition fst_cmp {A B} := fun (a : string * A) (b : string * B) => eqb (fst a) (fst b).
+
+Lemma has_cmp_fst : forall {T} li s t,
+  existsb (@fst_cmp T T (s, t)) li = existsb (eqb s) (map fst li).
+Proof.
+  intros T li. induction li; intros; simpl in *. { reflexivity. }
+  destruct a. unfold fst_cmp. simpl in *. destruct (eqb s s0). { reflexivity. }
+  apply (IHli _ t).
+Qed.
+
+Fixpoint set_diff {T} (a b : list (string * T)) :=
+  match a with
+  | [] => []
+  | hd :: tl =>
+      let recursed := set_diff tl b in
+      if (existsb (fst_cmp hd) tl || existsb (fst_cmp hd) b)%bool then recursed else hd :: recursed
+  end.
+
+Theorem incl_set_diff : forall {T} (a b : list (string * T)),
+  incl (set_diff a b) a.
+Proof.
+  unfold incl. induction a; intros; simpl in *. { destruct H. }
+  destruct (existsb (fst_cmp a) a0) eqn:Ea; simpl in *. { right. eapply IHa. apply H. }
+  destruct (existsb (fst_cmp a) b) eqn:Eb; simpl in *. { right. eapply IHa. apply H. }
+  destruct H. { left. assumption. } right. eapply IHa. apply H.
+Qed.
+
+Theorem partition_src_app : forall {T} (a b : list (string * T)),
+  partition_src_with fst_cmp a b = set_diff a b ++ b.
+Proof.
+  induction a; intros; simpl in *. { reflexivity. }
+  destruct a. repeat rewrite has_cmp_fst. erewrite map_fst_partition_src;
+  [| intros; unfold fst_cmp; simpl; reflexivity]. rewrite (existsb_partition_src _ _ _ _ eqb_spec).
+  destruct (existsb (eqb s) (map fst a0) || existsb (eqb s) (map fst b))%bool; simpl; f_equal; apply IHa.
+Qed.
