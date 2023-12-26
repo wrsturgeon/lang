@@ -8,32 +8,58 @@ From Lang Require Import
   Invert
   Remove.
 
-(* TODO: This needs to be deterministic. If not, free variables are nondeterministic, which is disastrous. *)
 (* Partition a context into types (which allow structural rules) and values (which don't). *)
 Inductive Partition {T} : list T -> list T -> list T -> Prop :=
   | PartitionDone : forall src,
       Partition src [] src
-  | PartitionCopy : forall x src hi lo n,
-      Count x src (S n) ->
-      Count x lo (S n) ->
+  | PartitionCpHi : forall x src hi lo,
+      In x hi ->
       Partition src hi lo ->
       Partition src (x :: hi) lo
-  | PartitionMove : forall x src src' hi lo nsrc nlo,
-      Count x src nsrc ->
-      Count x lo nlo ->
-      nsrc > nlo ->
-      Partition src' hi lo ->
-      Remove x src src' ->
+  | PartitionCpLo : forall x src hi lo,
+      ~In x hi ->
+      In x lo ->
+      Partition src hi lo ->
       Partition src (x :: hi) lo
+  | PartitionMove : forall x src hi lo,
+      ~In x hi ->
+      ~In x lo ->
+      Partition src hi lo ->
+      Partition (x :: src) (x :: hi) lo
   .
 Arguments Partition {T} src hi lo.
+Ltac auto_in := repeat (try (left; reflexivity); right); fail.
+Ltac not_in := intros C; repeat (destruct C as [C | C]; [discriminate C |]); destruct C as [].
 Ltac partition_done := apply PartitionDone.
-Ltac partition_move := eapply PartitionMove; [autocount | autocount | lia | | repeat constructor; intro; discriminate].
-Ltac partition_copy := eapply PartitionCopy; [autocount | autocount |].
-Ltac partition_step := first [partition_done | partition_copy | partition_move].
-Ltac partition := first [partition_done | first [partition_copy | partition_move]; partition].
+Ltac partition_copy_hi := eapply PartitionCpHi; [auto_in |].
+Ltac partition_copy_lo := eapply PartitionCpLo; [not_in | auto_in |].
+Ltac partition_move := eapply PartitionMove; [not_in | not_in |].
+Ltac partition_step := first [partition_done | partition_copy_hi | partition_copy_lo | partition_move].
+Ltac try_partition := repeat partition_step.
+Ltac partition := first [partition_done | first [partition_copy_hi | partition_copy_lo | partition_move]; partition].
 
-Example partition_12345 : Partition [1;2;3;4;5] [1;1;1;1;1;1;4;2;3;3] [1;3;5]. Proof. partition. Qed.
+Example partition_12345 : Partition [4;2;1;3;5] [1;1;1;1;1;1;4;2;3;2;2;3] [1;3;5]. Proof. partition. Qed.
+
+Theorem partition_deterministic : forall {T} src src' hi lo,
+  @Partition T src hi lo ->
+  Partition src' hi lo ->
+  src = src'.
+Proof.
+  intros. generalize dependent src'. induction H; intros; simpl in *.
+  - invert H0. reflexivity.
+  - invert H1.
+    + apply IHPartition; assumption.
+    + apply H4 in H as [].
+    + apply H4 in H as [].
+  - invert H2.
+    + apply H in H6 as [].
+    + apply IHPartition; assumption.
+    + apply H7 in H0 as [].
+  - invert H2.
+    + apply H in H6 as [].
+    + apply H0 in H7 as [].
+    + f_equal. apply IHPartition; assumption.
+Qed.
 
 (* not efficient at all but not a problem right now *)
 Fixpoint partition_src_with {T} (f : T -> T -> bool) hi lo :=
@@ -41,7 +67,8 @@ Fixpoint partition_src_with {T} (f : T -> T -> bool) hi lo :=
   | [] => lo
   | hd :: tl =>
       let recursed := partition_src_with f tl lo in
-      if (existsb (f hd) tl || existsb (f hd) lo)%bool then recursed else hd :: recursed
+      (* NOTE: Checking for existence in `recursed` checks both `lo` AND `tl` at once. *)
+      if existsb (f hd) recursed then recursed else hd :: recursed
   end.
 
 Lemma existsb_in : forall {T} f x li,
@@ -70,27 +97,6 @@ Proof.
   { contradiction. } { discriminate. } { reflexivity. } { assumption. }
 Qed.
 
-Theorem in_partition_src : forall {T} x (f : T -> T -> bool) hi lo,
-  (forall a b, Bool.reflect (a = b) (f a b)) ->
-  In x (partition_src_with f hi lo) <-> (In x hi \/ In x lo).
-Proof.
-  split; intros.
-  - generalize dependent x. generalize dependent f. generalize dependent lo.
-    induction hi; intros; simpl in *. { right. assumption. }
-    apply or_assoc. destruct (existsb_in f a hi X); simpl in *. { right. eapply IHhi. { apply X. } assumption. }
-    destruct (existsb_in f a lo X). { right. eapply IHhi. { apply X. } assumption. }
-    destruct H. { left. assumption. } apply IHhi in H; [| apply X]. right. assumption.
-  - generalize dependent x. generalize dependent f. generalize dependent lo.
-    induction hi; intros; simpl in *. { destruct H. { destruct H. } assumption. }
-    apply or_assoc in H. destruct H; subst.
-    + destruct (existsb_in f x hi X); simpl in *. { apply IHhi; [| left]; assumption. }
-      destruct (existsb_in f x lo X); simpl in *. { apply IHhi; [| right]; assumption. }
-      left. reflexivity.
-    + destruct (existsb_in f a hi X); simpl in *. { apply IHhi; assumption. }
-      destruct (existsb_in f a lo X); simpl in *. { apply IHhi; assumption. }
-      destruct (X a x). { left. assumption. } right. apply IHhi; assumption.
-Qed.
-
 Theorem count_partition_src : forall {T} x f hi lo,
   (forall a b : T, Bool.reflect (a = b) (f a b)) ->
   count f x (partition_src_with f hi lo) = (
@@ -104,104 +110,102 @@ Theorem count_partition_src : forall {T} x f hi lo,
         S n
     end).
 Proof.
-  intros T x f hi. generalize dependent x. generalize dependent f. induction hi; intros; simpl in *.
-  - induction lo; simpl in *. { constructor. }
-    destruct (X x a); [rewrite count_S |]; destruct (count_acc 0 f x lo); reflexivity.
-  - destruct (existsb_in f a hi X); simpl in *.
-    + destruct (X x a); [| apply IHhi; assumption]. subst. rewrite count_S.
-      rewrite (IHhi f a lo X). eapply existsb_in_iff in i; [| apply X].
-      destruct (count_existsb f a hi X); [| discriminate i]. simpl in n.
-      destruct (count_acc 0 f a hi). { contradiction n. reflexivity. } reflexivity.
-    + destruct (existsb_in f a lo X); simpl in *.
-      * destruct (X x a); [| apply IHhi; apply X]. subst. rewrite count_S.
-        rewrite (IHhi f a lo X). eapply existsb_in_iff in i; [| apply X].
-        destruct (count_existsb f a lo X); [| discriminate i]. simpl in n0.
-        destruct (count_acc 0 f a lo). { contradiction n0. reflexivity. } reflexivity.
-      * eapply existsb_in_iff_not in n; [| apply X]. eapply existsb_in_iff_not in n0; [| apply X].
-        destruct (count_existsb f a lo X); try discriminate n0. destruct (count_existsb f a hi X); try discriminate n.
-        simpl in *. destruct (count_acc 0 f a lo) eqn:El; try (contradiction n1; intro C; discriminate C).
-        destruct (count_acc 0 f a hi) eqn:Eh; try (contradiction n2; intro C; discriminate C).
-        destruct (X x a). { subst. repeat rewrite count_S. rewrite IHhi; [| apply X]. rewrite El. rewrite Eh. reflexivity. }
-        apply IHhi. apply X.
+  intros. generalize dependent x. generalize dependent f. generalize dependent lo.
+  induction hi; intros; simpl in *. { destruct (count_acc 0 f x lo); reflexivity. }
+  destruct (count_existsb f a (partition_src_with f hi lo) X); simpl in *.
+  - destruct (X x a); [| apply IHhi; apply X]. rewrite count_S. subst. simpl in *.
+    destruct (count_acc 0 f a (partition_src_with f hi lo)) eqn:Ep. { contradiction n. reflexivity. } clear n.
+    rewrite IHhi in Ep; [| apply X]. destruct (count_acc 0 f a lo) eqn:El; [| symmetry; assumption].
+    destruct (count_acc 0 f a hi). { discriminate Ep. } symmetry. assumption.
+  - destruct (X x a); [| apply IHhi; apply X]. subst. repeat rewrite count_S.
+    destruct (count_acc 0 f a (partition_src_with f hi lo)) eqn:Ep; [| contradiction n; intro C; discriminate C]. clear n.
+    rewrite IHhi in Ep; [| apply X]. destruct (count_acc 0 f a lo); [| discriminate Ep]. reflexivity.
 Qed.
 
-(*
+Theorem existsb_partition_src : forall {T} x f hi lo,
+  (forall a b : T, Bool.reflect (a = b) (f a b)) ->
+  existsb (f x) (partition_src_with f hi lo) = orb (existsb (f x) hi) (existsb (f x) lo).
+Proof.
+  intros. destruct (count_existsb f x (partition_src_with f hi lo) X);
+  destruct (count_existsb f x hi X); destruct (count_existsb f x lo X);
+  try reflexivity; rewrite count_partition_src in n; destruct (count f x hi); auto; destruct (count f x lo); lia.
+Qed.
+
+Theorem in_partition_src : forall {T} x (f : T -> T -> bool) hi lo,
+  (forall a b, Bool.reflect (a = b) (f a b)) ->
+  In x (partition_src_with f hi lo) <-> (In x hi \/ In x lo).
+Proof.
+  intros. repeat (rewrite existsb_in_iff; [| apply X]).
+  rewrite existsb_partition_src; [| apply X]. apply Bool.orb_true_iff.
+Qed.
+
+Theorem not_in_partition_src : forall {T} x (f : T -> T -> bool) hi lo,
+  (forall a b, Bool.reflect (a = b) (f a b)) ->
+  ~In x (partition_src_with f hi lo) <-> (~In x hi /\ ~In x lo).
+Proof.
+  intros. repeat (rewrite existsb_in_iff; [| apply X]).
+  rewrite existsb_partition_src; [| apply X].
+  repeat rewrite Bool.not_true_iff_false. apply Bool.orb_false_iff.
+Qed.
+
 Theorem partition_src_works : forall {T} (f : T -> T -> bool) hi lo,
   (forall a b, Bool.reflect (a = b) (f a b)) ->
   Partition (partition_src_with f hi lo) hi lo.
 Proof.
-  induction hi; intros; simpl in *. { constructor. }
-  destruct (count_existsb f a hi X); simpl in *.
-
-  destruct (count_existsb f a hi); [apply X | |]; simpl in *.
-  - destruct (count_acc 0 f a hi) eqn:Eh. { contradiction n. reflexivity. } clear n.
-    eapply PartitionCopy; [| | apply IHhi; apply X]; (eapply reflect_count; [apply X |]).
-    + rewrite count_partition_src; [| apply X]. simpl. rewrite Eh. assert (A :
-        match count_acc 0 f a lo with O => 1 | S n => S n end =
-        S match count_acc 0 f a lo with O => O | S n => n end);
-      [destruct (count_acc 0 f a lo); reflexivity |]. apply A.
-    + simpl. destruct (count_acc 0 f a lo) eqn:El; [| reflexivity]. admit.
-  - destruct (count_acc 0 f a hi) eqn:Eh; [| contradiction n; intro C; discriminate C]. clear n.
-    destruct (count_existsb f a lo). { apply X. }
-
-    remember (count_acc 0 f a lo) as nlo eqn:Enlo. symmetry in Enlo. destruct (PeanoNat.Nat.eqb_spec (S n0) nlo).
-    + subst. eapply PartitionCopy; [| | apply IHhi; apply X]; (eapply reflect_count; [apply X |]).
-      2: { symmetry. apply e. } rewrite count_partition_src; [| apply X]. simpl. rewrite Eh. rewrite <- e. reflexivity.
-    + eapply PartitionMove.
-      * eapply reflect_count. { apply X. } apply count_partition_src. apply X.
-      * eapply reflect_count. { apply X. } shelve.
-      * simpl. rewrite Eh. rewrite Enlo. shelve.
-      * apply IHhi. apply X.
-      * 
-
-  destruct (existsb (f a) hi) eqn:E; [| eapply PartitionMove; [apply IHhi; assumption | constructor]].
-  constructor. { apply IHhi. assumption. } apply in_partition_src. { assumption. }
-  left. clear lo. clear IHhi. generalize dependent f. generalize dependent a.
-  induction hi; intros; simpl in *. { discriminate E. }
-  apply Bool.orb_true_iff in E. destruct E. { destruct (X a0 a). { left. symmetry. assumption. } discriminate H. }
-  right. eapply IHhi. { apply X. } assumption.
+  intros. generalize dependent f. generalize dependent lo. induction hi; intros; simpl in *. { constructor. }
+  destruct (existsb_in f a (partition_src_with f hi lo) X).
+  - rewrite in_partition_src in i; [| apply X]. destruct i.
+    + apply PartitionCpHi; [| apply IHhi]; assumption.
+    + destruct (existsb_in f a hi X).
+      * apply PartitionCpHi; [| apply IHhi]; assumption.
+      * apply PartitionCpLo; [| | apply IHhi]; assumption.
+  - apply not_in_partition_src in n as [Hhi Hlo]; [| apply X]. apply PartitionMove; [| | apply IHhi]; assumption.
 Qed.
 
-Lemma in_map_fst : forall {A B} a b li,
+Theorem reflect_partition_src : forall {T} (f : T -> T -> bool) src hi lo,
+  (forall a b, Bool.reflect (a = b) (f a b)) ->
+  (partition_src_with f hi lo = src <-> Partition src hi lo).
+Proof.
+  split; intros.
+  - subst. apply partition_src_works. assumption.
+  - eapply partition_deterministic. { apply partition_src_works. assumption. } assumption.
+Qed.
+
+Theorem in_map_fst : forall {A B} a b li,
   @In (A * B) (a, b) li ->
   In a (map fst li).
 Proof.
-  intros. generalize dependent a. generalize dependent b. induction li; intros; destruct H.
-  - invert H. left. reflexivity.
-  - destruct a. right. eapply IHli. apply H.
+  induction li; intros; simpl in *; destruct H.
+  - subst. left. reflexivity.
+  - right. apply IHli. assumption.
 Qed.
 
-Theorem partition_deterministic : forall {T} src src' hi lo,
-  @Partition T src hi lo ->
-  Partition src' hi lo ->
-  src = src'.
+Definition ap_fst {A B C} : (A -> C) -> ((A * B) -> C) := fun f x => let (a, b) := x in f a.
+
+Lemma existsb_map_fst : forall {A B} li f f' x y,
+  (forall (a a' : A) (b b' : B), f (a, b) (a', b') = f' a a') ->
+  existsb (f (x, y)) li = existsb (f' x) (map fst li).
 Proof.
-  intros. generalize dependent src'. induction H; intros.
-  - (* PartitionDone *)
-    invert H0. reflexivity.
-  - (* PartitionCopy *)
-    invert H1.
-    + (* PartitionCopy *)
-      apply IHPartition; assumption.
-    + (* PartitionMove *)
-      invert H5.
-      * invert H.
-      apply IHPartition. invert H5.
-      * invert H.
-      generalize dependent src. generalize dependent hi. generalize dependent lo. induction H7; intros; simpl in *.
-      * apply IHPartition. apply PartitionCopy.
-  - (* PartitionMove *)
-    invert H1.
-    + (* PartitionCopy *)
-      apply IHPartition.
+  induction li; intros; simpl in *. { reflexivity. }
+  destruct a. simpl. rewrite H. destruct (f' x a). { reflexivity. } apply IHli. assumption.
 Qed.
 
-Theorem partition_map_fst : forall {A B} src hi lo,
-  @Partition (A * B) src hi lo ->
-  Partition (map fst src) (map fst hi) (map fst lo).
+Lemma map_fst_partition_src : forall {A B} f f' hi lo,
+  (forall (a a' : A) (b b' : B), f (a, b) (a', b') = f' a a') ->
+  map fst (partition_src_with f hi lo) = partition_src_with f' (map fst hi) (map fst lo).
 Proof.
-  intros. induction H. { constructor. }
-  - destruct x. simpl. constructor. { assumption. } eapply in_map_fst. apply H0.
-  - destruct x. simpl. eapply PartitionMove. { apply IHPartition. } eapply remove_map_fst. apply H0.
+  intros. generalize dependent lo. generalize dependent f'. generalize dependent f.
+  induction hi; intros; simpl in *. { reflexivity. }
+  destruct a. simpl. rewrite (existsb_map_fst _ f f' _ _ H). rewrite (IHhi _ _ H).
+  destruct (existsb (f' a) (partition_src_with f' (map fst hi) (map fst lo))) eqn:E.
+  - apply IHhi. assumption.
+  - simpl. f_equal. apply IHhi. assumption.
 Qed.
-*)
+
+Theorem partition_map_fst : forall {A B} f f' hi lo,
+  (forall a b : A, Bool.reflect (a = b) (f' a b)) ->
+  (forall (a a' : A) (b b' : B), f (a, b) (a', b') = f' a a') ->
+  Partition (map fst (partition_src_with f hi lo)) (map fst hi) (map fst lo).
+Proof.
+  intros. erewrite map_fst_partition_src. { apply partition_src_works. apply X. } assumption.
+Qed.
