@@ -67,3 +67,39 @@ Proof.
   induction li; intros; simpl in *. { constructor. intro C. apply C. reflexivity. }
   destruct (f x a) eqn:Ef. { constructor. rewrite count_S. intro C. discriminate C. } apply IHli. assumption.
 Qed.
+
+Theorem count_existsb_true : forall {T} f x li,
+  (forall a b : T, Bool.reflect (a = b) (f a b)) ->
+  count f x li <> 0 <-> existsb (f x) li = true.
+Proof.
+  intros. destruct (count_existsb f x li). { assumption. }
+  - split; intros. { reflexivity. } { assumption. }
+  - split; intros. { apply n in H as []. } { discriminate H. }
+Qed.
+
+Theorem count_existsb_false : forall {T} f x li,
+  (forall a b : T, Bool.reflect (a = b) (f a b)) ->
+  count f x li = 0 <-> existsb (f x) li = false.
+Proof.
+  intros. destruct (count_existsb f x li). { assumption. }
+  - split; intros. { apply n in H as []. } { discriminate H. }
+  - split; intros. { reflexivity. } { destruct (count f x li). { reflexivity. } contradiction n. intro C. discriminate C. }
+Qed.
+
+Definition ap_fst_2 {A B C} : (A -> A -> C) -> A -> (A * B) -> C := fun f a pair =>
+  let (b, _) := pair in f a b.
+Arguments ap_fst_2 {A B C} f a pair.
+
+Theorem count_map_fst : forall {K V} (f : K -> K -> bool) k (li : list (K * V)) acc,
+  count_acc acc f k (map fst li) = count_acc acc (ap_fst_2 f) k li.
+Proof.
+  intros K V f k li. generalize dependent f. generalize dependent k. induction li; intros; simpl in *. { reflexivity. }
+  destruct a. simpl in *. destruct (f k k0); apply IHli.
+Qed.
+
+Theorem existsb_map_fst : forall {K V} (f : K -> K -> bool) k (li : list (K * V)),
+  existsb (f k) (map fst li) = existsb (ap_fst_2 f k) li.
+Proof.
+  intros. generalize dependent f. generalize dependent k. induction li; intros; simpl in *. { reflexivity. }
+  destruct a. simpl in *. destruct (f k k0). { reflexivity. } apply IHli.
+Qed.

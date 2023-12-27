@@ -83,32 +83,6 @@ Fixpoint partition_src_with {T} (f : T -> T -> bool) hi lo :=
       if existsb (f hd) recursed then recursed else hd :: recursed
   end.
 
-Lemma existsb_in : forall {T} f x li,
-  (forall a b : T, Bool.reflect (a = b) (f a b)) ->
-  Bool.reflect (In x li) (existsb (f x) li).
-Proof.
-  intros. generalize dependent f. generalize dependent x. induction li; intros; simpl in *. { constructor. intros []. }
-  destruct (X x a). { subst. constructor. left. reflexivity. }
-  destruct (IHli x f X); constructor. { right. assumption. }
-  intros [C | C]. { subst. apply n. reflexivity. } apply n0. assumption.
-Qed.
-
-Lemma existsb_in_iff : forall {T} f x li,
-  (forall a b : T, Bool.reflect (a = b) (f a b)) ->
-  (In x li <-> existsb (f x) li = true).
-Proof.
-  intros. destruct (existsb_in f x li X); split; intros.
-  { reflexivity. } { assumption. } { contradiction. } { discriminate. }
-Qed.
-
-Lemma existsb_in_iff_not : forall {T} f x li,
-  (forall a b : T, Bool.reflect (a = b) (f a b)) ->
-  (~In x li <-> existsb (f x) li = false).
-Proof.
-  intros. destruct (existsb_in f x li X); split; intros.
-  { contradiction. } { discriminate. } { reflexivity. } { assumption. }
-Qed.
-
 Theorem count_partition_src : forall {T} x f hi lo,
   (forall a b : T, Bool.reflect (a = b) (f a b)) ->
   count f x (partition_src_with f hi lo) = (
@@ -182,15 +156,6 @@ Proof.
   split; intros.
   - subst. apply partition_src_works. assumption.
   - eapply partition_deterministic. { apply partition_src_works. assumption. } assumption.
-Qed.
-
-Theorem in_map_fst : forall {A B} a b li,
-  @In (A * B) (a, b) li ->
-  In a (map fst li).
-Proof.
-  induction li; intros; simpl in *; destruct H.
-  - subst. left. reflexivity.
-  - right. apply IHli. assumption.
 Qed.
 
 Definition ap_fst {A B C} : (A -> C) -> ((A * B) -> C) := fun f x => let (a, b) := x in f a.
