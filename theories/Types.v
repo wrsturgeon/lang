@@ -145,7 +145,7 @@ Proof.
     + (* dealing with bound variables *)
       simpl. constructor.
     + (* concatenating the contexts used to type the type and the body *)
-      partition_move. partition_done.
+      apply PartitionMove; [| | apply PartitionDone]; intro C; destruct C as [].
   - (* deadling with bound variables *)
     simpl. constructor.
   - (* concatenating the contexts used to type the type and the body *)

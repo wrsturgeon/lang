@@ -5,6 +5,7 @@ From Coq Require Export
 Export ListNotations.
 From Lang Require Import
   Count
+  InTactics
   Invert
   Remove.
 
@@ -23,22 +24,31 @@ Inductive Partition {T} : list T -> list T -> list T -> Prop :=
       Partition src (x :: hi) lo
   | PartitionMove : forall x src hi lo,
       ~In x hi ->
-      ~In x lo ->
+      ~In x src ->
       Partition src hi lo ->
       Partition (x :: src) (x :: hi) lo
   .
 Arguments Partition {T} src hi lo.
-Ltac auto_in := repeat (try (left; reflexivity); right); fail.
-Ltac not_in := intros C; repeat (destruct C as [C | C]; [discriminate C |]); destruct C as [].
 Ltac partition_done := apply PartitionDone.
 Ltac partition_copy_hi := eapply PartitionCpHi; [auto_in |].
-Ltac partition_copy_lo := eapply PartitionCpLo; [not_in | auto_in |].
-Ltac partition_move := eapply PartitionMove; [not_in | not_in |].
+Ltac partition_copy_lo := eapply PartitionCpLo; [intros C; not_in C | auto_in |].
+Ltac partition_move := eapply PartitionMove; [intros C; not_in C | intros C; not_in C |].
 Ltac partition_step := first [partition_done | partition_copy_hi | partition_copy_lo | partition_move].
 Ltac try_partition := repeat partition_step.
 Ltac partition := first [partition_done | first [partition_copy_hi | partition_copy_lo | partition_move]; partition].
 
 Example partition_12345 : Partition [4;2;1;3;5] [1;1;1;1;1;1;4;2;3;2;2;3] [1;3;5]. Proof. partition. Qed.
+
+Theorem partition_src_app_lo : forall {T} src hi lo,
+  @Partition T src hi lo ->
+  exists pre, src = pre ++ lo.
+Proof.
+  intros. induction H.
+  - exists []. reflexivity.
+  - apply IHPartition.
+  - apply IHPartition.
+  - destruct IHPartition as [pre E]. exists (x :: pre). simpl. f_equal. assumption.
+Qed.
 
 Theorem partition_deterministic : forall {T} src src' hi lo,
   @Partition T src hi lo ->
@@ -54,10 +64,12 @@ Proof.
   - invert H2.
     + apply H in H6 as [].
     + apply IHPartition; assumption.
-    + apply H7 in H0 as [].
+    + apply partition_src_app_lo in H9 as [pre E]. subst. rewrite in_app_iff in H7.
+      apply Decidable.not_or in H7 as [H2 H3]. apply H3 in H0 as [].
   - invert H2.
     + apply H in H6 as [].
-    + apply H0 in H7 as [].
+    + apply partition_src_app_lo in H1 as [pre E]. subst. rewrite in_app_iff in H0.
+      apply Decidable.not_or in H0 as [H2 H3]. apply H3 in H7 as [].
     + f_equal. apply IHPartition; assumption.
 Qed.
 
@@ -159,7 +171,8 @@ Proof.
     + destruct (existsb_in f a hi X).
       * apply PartitionCpHi; [| apply IHhi]; assumption.
       * apply PartitionCpLo; [| | apply IHhi]; assumption.
-  - apply not_in_partition_src in n as [Hhi Hlo]; [| apply X]. apply PartitionMove; [| | apply IHhi]; assumption.
+  - apply not_in_partition_src in n as [Hhi Hlo]; [| apply X]. apply PartitionMove; [assumption | | apply IHhi; assumption].
+    intro C. apply in_partition_src in C as [C | C]; [| | assumption]. { apply Hhi in C as []. } apply Hlo in C as [].
 Qed.
 
 Theorem reflect_partition_src : forall {T} (f : T -> T -> bool) src hi lo,
