@@ -54,3 +54,14 @@ Proof.
   intros. destruct (existsb_in f x li X); split; intros.
   { contradiction. } { discriminate. } { reflexivity. } { assumption. }
 Qed.
+
+Lemma in_map_fst_app : forall {K V} k (a b : list (K * V)),
+  In k (map fst (a ++ b)) <-> (In k (map fst a) \/ In k (map fst b)).
+Proof.
+  split; intros.
+  - generalize dependent k. generalize dependent b. induction a; intros. { right. assumption. }
+    destruct a. simpl in *. destruct H. { left. left. assumption. }
+    apply or_assoc. right. apply IHa. assumption.
+  - generalize dependent k. generalize dependent b. induction a; intros. { destruct H. { destruct H. } assumption. }
+    simpl in *. apply or_assoc in H as [H | H]. { left. assumption. } right. apply IHa. assumption.
+Qed.

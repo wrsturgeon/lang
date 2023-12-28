@@ -5,6 +5,7 @@ From Coq Require Export
 Export ListNotations.
 From Lang Require Import
   Count
+  Find
   InTactics
   Invert
   Remove.
@@ -20,12 +21,12 @@ Inductive PartitionKV {K V} : list (K * V) -> list (K * V) -> list (K * V) -> Pr
   | PartitionKVDone : forall src,
       PartitionKV src [] src
   | PartitionKVCpHi : forall k v src hi lo,
-      In (k, v) hi ->
+      FindKV k v hi ->
       PartitionKV src hi lo ->
       PartitionKV src ((k, v) :: hi) lo
   | PartitionKVCpLo : forall k v src hi lo,
       ~In k (map fst hi) ->
-      In (k, v) lo ->
+      FindKV k v src -> (* `src`, not `lo`, since we can't allow different shadowed variables in `src` & `lo` *)
       PartitionKV src hi lo ->
       PartitionKV src ((k, v) :: hi) lo
   | PartitionKVMove : forall k v src hi lo,
@@ -36,8 +37,8 @@ Inductive PartitionKV {K V} : list (K * V) -> list (K * V) -> list (K * V) -> Pr
   .
 Arguments PartitionKV {K V} src hi lo.
 Ltac partition_kv_done := apply PartitionKVDone.
-Ltac partition_kv_copy_hi := eapply PartitionKVCpHi; [auto_in |].
-Ltac partition_kv_copy_lo := eapply PartitionKVCpLo; [intros C; not_in C | auto_in |].
+Ltac partition_kv_copy_hi := eapply PartitionKVCpHi; [find_kv |].
+Ltac partition_kv_copy_lo := eapply PartitionKVCpLo; [intros C; not_in C | find_kv |].
 Ltac partition_kv_move := eapply PartitionKVMove; [intros C; not_in C | intros C; not_in C |].
 Ltac partition_kv_step := first [partition_kv_done | partition_kv_copy_hi | partition_kv_copy_lo | partition_kv_move].
 Ltac try_partition_kv := repeat partition_kv_step.
@@ -48,7 +49,7 @@ Example partition_kv_12345 :
   [(4,4);(2,2);(1,1);(3,3);(5,5)]
   [(1,1);(1,1);(1,1);(1,1);(1,1);(1,1);(4,4);(2,2);(3,3);(2,2);(2,2);(3,3)]
   [(1,1);(3,3);(5,5)].
-Proof. partition_kv. Qed.
+Proof. try_partition_kv. Qed.
 
 (* This works but takes a ridiculously long time (~5 seconds).
 Example not_partition_kv_12345 :
@@ -81,14 +82,17 @@ Theorem partition_kv_deterministic : forall {K V} src src' hi lo,
 Proof.
   intros. generalize dependent src'. induction H; intros; simpl in *.
   - invert H0. reflexivity.
-  - invert H1; try (apply IHPartitionKV; assumption). apply in_map_fst in H. apply H6 in H as [].
+  - invert H1; try (apply IHPartitionKV; assumption). apply find_kv_in_fst in H. apply H6 in H as [].
   - invert H2; try (apply IHPartitionKV; assumption).
-    apply partition_kv_src_app_lo in H10 as [pre E]. subst.
-    eapply or_intror in H0. apply in_app_iff in H0. apply in_map_fst in H0. apply H9 in H0 as [].
+    assert (A := IHPartitionKV _ H10). symmetry in A. subst. clear H10 H7.
+    apply partition_kv_src_app_lo in H1 as [pre E]. subst.
+    rewrite in_map_fst_app in H9. apply Decidable.not_or in H9 as [H8 H9].
+    apply find_kv_in_fst in H0. apply H9 in H0 as [].
   - invert H2.
-    + apply in_map_fst in H8. apply H in H8 as [].
+    + apply find_kv_in_fst in H8. apply H in H8 as [].
     + apply partition_kv_src_app_lo in H1 as [pre E]. subst.
-      eapply or_intror in H9. apply in_app_iff in H9. apply in_map_fst in H9. apply H0 in H9 as [].
+      rewrite in_map_fst_app in H0. apply Decidable.not_or in H0 as [H0 H1].
+      apply find_kv_in_fst in H9. apply H1 in H9 as [].
     + f_equal. apply IHPartitionKV. assumption.
 Qed.
 
@@ -105,20 +109,10 @@ Proof.
   [reflexivity | | |]; intro C; invert C; contradiction.
 Qed.
 
-Theorem partition_kv_universal : forall {K V} hi lo fk fv,
-  (forall a b : K, Bool.reflect (a = b) (fk a b)) ->
-  (forall a b : V, Bool.reflect (a = b) (fv a b)) ->
-  exists src, @PartitionKV K V src hi lo.
-Proof.
-  induction hi; intros; simpl in *. { exists lo. constructor. }
-  remember (both_2 fk fv) as f eqn:Ef.
-  destruct a as [k v]. destruct (IHhi lo fk fv X X0) as [src H].
-  destruct (existsb_in f (k, v) hi). { subst. apply both_2_reflect; assumption. }
-  - eexists. eapply PartitionKVCpHi. { assumption. } apply H.
-  - destruct (existsb_in fk k (map fst hi) X). { eexists. eapply PartitionKVMove. Abort.
-(* This is actually, crucially, not true!
- * Specifically, you can't require the same variable to be mapped to two different types. *)
-
+(* `fk` is equality on `K`
+ * `fv` is equality on `V`
+ * `hi` is the typing context
+ * `lo` is the value context *)
 Fixpoint partition_kv_src_with {K V} fk fv hi lo : option (list (K * V)) :=
   match hi with
   | [] => Some lo
