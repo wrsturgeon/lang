@@ -14,85 +14,56 @@ From Lang Require Import
  * stems from the subtle but crucial observation that
  * `In k (map fst li)` and `In (k, v) li` are not one-to-one. *)
 
-(* TODO: Shadowing should be okay, so overhaul the whole semantics s.t. `src` is only the appended bit.
- * Then `~In k (map fst src)` just means "not *adding* two contradictory bindings" (right now, it's stronger).
- * WAIT, NEVER MIND: just use first instead of `In` *)
 Inductive PartitionKV {K V} : list (K * V) -> list (K * V) -> list (K * V) -> Prop :=
-  | PartitionKVDone : forall src,
-      PartitionKV src [] src
-  | PartitionKVCpHi : forall k v src hi lo,
-      FindKV k v hi ->
-      PartitionKV src hi lo ->
-      PartitionKV src ((k, v) :: hi) lo
-  | PartitionKVCpLo : forall k v src hi lo,
-      ~In k (map fst hi) ->
-      FindKV k v src -> (* `src`, not `lo`, since we can't allow different shadowed variables in `src` & `lo` *)
-      PartitionKV src hi lo ->
-      PartitionKV src ((k, v) :: hi) lo
-  | PartitionKVMove : forall k v src hi lo,
-      ~In k (map fst hi) ->
-      ~In k (map fst src) ->
-      PartitionKV src hi lo ->
-      PartitionKV ((k, v) :: src) ((k, v) :: hi) lo
+  | PartitionKVDone : forall lo,
+      PartitionKV [] [] lo
+  | PartitionKVCpLo : forall k v pf hi lo,
+      FindKV k v lo ->
+      PartitionKV pf hi lo ->
+      PartitionKV pf ((k, v) :: hi) lo
+  | PartitionKVCpPf : forall k v pf hi lo,
+      ~In k (map fst lo) ->
+      FindKV k v pf ->
+      FindKV k v hi -> (* <-- i.e., can't move b/c it's used again *)
+      PartitionKV pf hi lo ->
+      PartitionKV pf ((k, v) :: hi) lo
+  | PartitionKVMove : forall k v pf hi lo,
+      ~In k (map fst lo) ->
+      ~In k (map fst pf) -> (* <-- i.e. not a duplicate *)
+      ~In k (map fst hi) -> (* <-- i.e. safe to move b/c not used again *)
+      PartitionKV pf hi lo ->
+      PartitionKV ((k, v) :: pf) ((k, v) :: hi) lo
   .
-Arguments PartitionKV {K V} src hi lo.
+Arguments PartitionKV {K V} pf hi lo.
 Ltac partition_kv_done := apply PartitionKVDone.
-Ltac partition_kv_copy_hi := eapply PartitionKVCpHi; [find_kv |].
-Ltac partition_kv_copy_lo := eapply PartitionKVCpLo; [intros C; not_in C | find_kv |].
-Ltac partition_kv_move := eapply PartitionKVMove; [intros C; not_in C | intros C; not_in C |].
-Ltac partition_kv_step := first [partition_kv_done | partition_kv_copy_hi | partition_kv_copy_lo | partition_kv_move].
+Ltac partition_kv_copy_lo := eapply PartitionKVCpLo; [find_kv |].
+Ltac partition_kv_copy_pf := eapply PartitionKVCpPf; [intros C; not_in C | find_kv | find_kv |].
+Ltac partition_kv_move := eapply PartitionKVMove; [intros C; not_in C | intros C; not_in C | intros C; not_in C |].
+Ltac partition_kv_step := first [partition_kv_done | partition_kv_copy_lo | partition_kv_copy_pf | partition_kv_move].
 Ltac try_partition_kv := repeat partition_kv_step.
-Ltac partition_kv := first [partition_kv_done | first [partition_kv_copy_hi | partition_kv_copy_lo | partition_kv_move]; partition_kv].
+Ltac partition_kv := first [partition_kv_done | first [partition_kv_copy_lo | partition_kv_copy_pf | partition_kv_move]; partition_kv].
 
 Example partition_kv_12345 :
   PartitionKV
-  [(4,4);(2,2);(1,1);(3,3);(5,5)]
+  [(4,4);(2,2)]
   [(1,1);(1,1);(1,1);(1,1);(1,1);(1,1);(4,4);(2,2);(3,3);(2,2);(2,2);(3,3)]
   [(1,1);(3,3);(5,5)].
-Proof. try_partition_kv. Qed.
+Proof. partition_kv. Qed.
 
-(* This works but takes a ridiculously long time (~5 seconds).
-Example not_partition_kv_12345 :
-  ~PartitionKV
-  [(4,4);(2,2);(1,1);(3,3);(5,5)] (* Here's the edit: v *)
-  [(1,1);(1,1);(1,1);(1,1);(1,1);(1,1);(4,4);(2,2);(3,4);(2,2);(2,2);(3,3)]
-  [(1,1);(3,3);(5,5)].
+Theorem partition_kv_deterministic : forall {K V} pf pf' hi lo,
+  @PartitionKV K V pf hi lo ->
+  PartitionKV pf' hi lo ->
+  pf = pf'.
 Proof.
-  intros C. repeat (try clear f; try clear g;
-    inversion C as [a b c d | a b c d e f Hp g h i | a b c d e f g Hp h i j | a b c d e f g Hp h i j];
-    clear C; subst; simpl in *; try not_in f; try not_in g; try (contradiction e; auto_in); rename Hp into C).
-Qed.
-*)
-
-Theorem partition_kv_src_app_lo : forall {K V} src hi lo,
-  @PartitionKV K V src hi lo ->
-  exists pre, src = pre ++ lo.
-Proof.
-  intros. induction H.
-  - exists []. reflexivity.
-  - apply IHPartitionKV.
-  - apply IHPartitionKV.
-  - destruct IHPartitionKV as [pre E]. exists ((k, v) :: pre). simpl. f_equal. assumption.
-Qed.
-
-Theorem partition_kv_deterministic : forall {K V} src src' hi lo,
-  @PartitionKV K V src hi lo ->
-  PartitionKV src' hi lo ->
-  src = src'.
-Proof.
-  intros. generalize dependent src'. induction H; intros; simpl in *.
+  intros. generalize dependent pf'. induction H; intros; simpl in *.
   - invert H0. reflexivity.
-  - invert H1; try (apply IHPartitionKV; assumption). apply find_kv_in_fst in H. apply H6 in H as [].
-  - invert H2; try (apply IHPartitionKV; assumption).
-    assert (A := IHPartitionKV _ H10). symmetry in A. subst. clear H10 H7.
-    apply partition_kv_src_app_lo in H1 as [pre E]. subst.
-    rewrite in_map_fst_app in H9. apply Decidable.not_or in H9 as [H8 H9].
+  - invert H1; try (apply IHPartitionKV; assumption). apply find_kv_in_fst in H. apply H5 in H as [].
+  - invert H3; try (apply IHPartitionKV; assumption).
+    assert (A := IHPartitionKV _ H12). symmetry in A. subst.
     apply find_kv_in_fst in H0. apply H9 in H0 as [].
-  - invert H2.
-    + apply find_kv_in_fst in H8. apply H in H8 as [].
-    + apply partition_kv_src_app_lo in H1 as [pre E]. subst.
-      rewrite in_map_fst_app in H0. apply Decidable.not_or in H0 as [H0 H1].
-      apply find_kv_in_fst in H9. apply H1 in H9 as [].
+  - invert H3.
+    + apply find_kv_in_fst in H9. apply H in H9 as [].
+    + apply find_kv_in_fst in H11. apply H1 in H11 as [].
     + f_equal. apply IHPartitionKV. assumption.
 Qed.
 
@@ -113,224 +84,171 @@ Qed.
  * `fv` is equality on `V`
  * `hi` is the typing context
  * `lo` is the value context *)
-Fixpoint partition_kv_src_with {K V} fk fv hi lo : option (list (K * V)) :=
+Fixpoint partition_kv_pf_slow {K V} fk (fv : V -> V -> bool) hi lo : option (list (K * V)) :=
   match hi with
-  | [] => Some lo
+  | [] => Some []
   | (k, v) :: tl =>
-      match partition_kv_src_with fk fv tl lo with
+      match partition_kv_pf_slow fk fv tl lo with
       | None => None
       | Some recursed =>
-          (* NOTE: Checking for existence in `recursed` checks both `lo` AND `tl` at once. *)
-          if existsb (both_2 fk fv (k, v)) recursed then Some recursed else
-          if existsb (ap_fst_2 fk k) recursed then None else Some ((k, v) :: recursed)
+          match find_kv fk k lo with
+          | Some vl => (* ==> there's a mapping for `k` in `lo` *)
+              if fv v vl then
+                (* ==> ready for `PartitionKVCpLo` *)
+                Some recursed
+              else
+                (* ==> inconsistent mappings *)
+                None
+          | None => (* ==> `k` is never mapped in `lo` ==> either `PartitionKVCpPf` or `PartitionKVMove` *)
+              match find_kv fk k tl with
+              | None => (* ==> ready for `PartitionKVMove *)
+                  Some ((k, v) :: recursed)
+              | Some vh => (* there's a mapping for `k` in `hi` ==> possibly `PartitionKVCpPf` *)
+                  if fv v vh then
+                    (* okay, right mapping at least: looking promising.
+                     * the only remaining condition for `PartitionKVCpPf` is `FindKV k v pf`.
+                     * recall that `pf` is the output of this function.
+                     * so can we prove that, by making it here, it already must be the case?
+                     * TODO *)
+                    Some recursed
+                  else
+                    (* ==> inconsistent mappings *)
+                    None
+              end
+          end
       end
   end.
 
-Theorem count_partition_kv_src : forall {K V} kv fk fv (hi lo : list (K * V)) src,
-  (forall a b : K, Bool.reflect (a = b) (fk a b)) ->
-  (forall a b : V, Bool.reflect (a = b) (fv a b)) ->
-  partition_kv_src_with fk fv hi lo = Some src ->
-  count (both_2 fk fv) kv src = (
-    match count (both_2 fk fv) kv lo with
-    | O =>
-        match count (both_2 fk fv) kv hi with
-        | O => O
-        | S _ => 1
-        end
-    | S n =>
-        S n
-    end).
-Proof.
-  intros. generalize dependent kv. generalize dependent fk.
-  generalize dependent fv. generalize dependent lo. generalize dependent src.
-  induction hi; intros; simpl in *. { invert H. destruct (count_acc 0 (both_2 fk fv) kv src); reflexivity. }
-  destruct kv as [k1 v1]. destruct a as [k2 v2]. simpl in *.
-  destruct (partition_kv_src_with fk fv hi lo) eqn:Ep; [| discriminate H].
-  destruct (count_existsb (both_2 fk fv) (k2, v2) l). { apply both_2_reflect; assumption. }
-  - invert H. specialize (IHhi _ _ _ X0 _ X Ep). destruct (X k1 k2); destruct (X0 v1 v2);
-    subst; simpl in *; repeat rewrite count_S; simpl in *.
-    + specialize (IHhi (k2, v2)). destruct (count_acc 0 (both_2 fk fv) (k2, v2) src) eqn:E. { contradiction n; reflexivity. }
-      clear n. destruct (count_acc 0 (both_2 fk fv) (k2, v2) lo) eqn:El; [| assumption].
-      destruct (count_acc 0 (both_2 fk fv) (k2, v2) hi) eqn:Eh; [| assumption]. discriminate IHhi.
-    + specialize (IHhi (k2, v1)). destruct (count_acc 0 (both_2 fk fv) (k2, v1) src) eqn:E;
-      destruct (count_acc 0 (both_2 fk fv) (k2, v1) lo) eqn:El; [| discriminate IHhi | | assumption];
-      destruct (count_acc 0 (both_2 fk fv) (k2, v1) hi) eqn:Eh; try discriminate IHhi; [reflexivity | assumption].
-    + specialize (IHhi (k1, v2)). destruct (count_acc 0 (both_2 fk fv) (k1, v2) src) eqn:E;
-      destruct (count_acc 0 (both_2 fk fv) (k1, v2) lo) eqn:El; [| discriminate IHhi | | assumption];
-      destruct (count_acc 0 (both_2 fk fv) (k1, v2) hi) eqn:Eh; try discriminate IHhi; [reflexivity | assumption].
-    + specialize (IHhi (k1, v1)). destruct (count_acc 0 (both_2 fk fv) (k1, v1) src) eqn:E;
-      destruct (count_acc 0 (both_2 fk fv) (k1, v1) lo) eqn:El; [| discriminate IHhi | | assumption];
-      destruct (count_acc 0 (both_2 fk fv) (k1, v1) hi) eqn:Eh; try discriminate IHhi; [reflexivity | assumption].
-  - destruct (existsb (ap_fst_2 fk k2) l) eqn:Ee; invert H.
-    destruct (count (both_2 fk fv) (k2, v2) l) eqn:Ec; [| contradiction n; intro C; discriminate C].
-    clear n. simpl in *. specialize (IHhi _ _ _ X0 _ X Ep). destruct (X k1 k2); destruct (X0 v1 v2);
-    subst; simpl in *; repeat rewrite count_S; simpl in *.
-    + specialize (IHhi (k2, v2)). destruct (count_acc 0 (both_2 fk fv) (k2, v2) l) eqn:E; [| discriminate Ec].
-      clear Ec. destruct (count_acc 0 (both_2 fk fv) (k2, v2) lo) eqn:El. { reflexivity. } discriminate IHhi.
-    + specialize (IHhi (k2, v1)). destruct (count_acc 0 (both_2 fk fv) (k2, v1) l) eqn:E;
-      destruct (count_acc 0 (both_2 fk fv) (k2, v1) lo) eqn:El; [| discriminate IHhi | | assumption];
-      destruct (count_acc 0 (both_2 fk fv) (k2, v1) hi) eqn:Eh; try discriminate IHhi; [reflexivity | assumption].
-    + specialize (IHhi (k1, v2)). destruct (count_acc 0 (both_2 fk fv) (k1, v2) l) eqn:E;
-      destruct (count_acc 0 (both_2 fk fv) (k1, v2) lo) eqn:El; [| discriminate IHhi | | assumption];
-      destruct (count_acc 0 (both_2 fk fv) (k1, v2) hi) eqn:Eh; try discriminate IHhi; [reflexivity | assumption].
-    + specialize (IHhi (k1, v1)). destruct (count_acc 0 (both_2 fk fv) (k1, v1) l) eqn:E;
-      destruct (count_acc 0 (both_2 fk fv) (k1, v1) lo) eqn:El; [| discriminate IHhi | | assumption];
-      destruct (count_acc 0 (both_2 fk fv) (k1, v1) hi) eqn:Eh; try discriminate IHhi; [reflexivity | assumption].
-Qed.
-
-Theorem existsb_partition_kv_src : forall {K V} kv fk fv (hi lo : list (K * V)) src,
-  (forall a b : K, Bool.reflect (a = b) (fk a b)) ->
-  (forall a b : V, Bool.reflect (a = b) (fv a b)) ->
-  partition_kv_src_with fk fv hi lo = Some src ->
-  existsb (both_2 fk fv kv) src = orb (existsb (both_2 fk fv kv) hi) (existsb (both_2 fk fv kv) lo).
-Proof.
-  intros. assert (A := both_2_reflect _ _ X X0).
-  destruct (existsb (both_2 fk fv kv) src) eqn:Es;
-  destruct (existsb (both_2 fk fv kv) hi) eqn:Eh;
-  destruct (existsb (both_2 fk fv kv) lo) eqn:El;
-  try reflexivity; simpl in *;
-  try (apply count_existsb_true in Es; [| assumption]); try (apply count_existsb_false in Es; [| assumption]);
-  try (apply count_existsb_true in Eh; [| assumption]); try (apply count_existsb_false in Eh; [| assumption]);
-  try (apply count_existsb_true in El; [| assumption]); try (apply count_existsb_false in El; [| assumption]);
-  rewrite (count_partition_kv_src _ _ _ hi lo) in Es; try assumption;
-  destruct (count (both_2 fk fv) kv hi) eqn:Ech; try (contradiction Eh; reflexivity); try discriminate Eh;
-  destruct (count (both_2 fk fv) kv lo) eqn:Ecl; try (contradiction Es; reflexivity); discriminate Es.
-Qed.
-
-Theorem in_partition_kv_src : forall {K V} k fk fv (hi lo : list (K * V)) src,
-  (forall a b : K, Bool.reflect (a = b) (fk a b)) ->
-  (forall a b : V, Bool.reflect (a = b) (fv a b)) ->
-  partition_kv_src_with fk fv hi lo = Some src ->
-  In k src <-> (In k hi \/ In k lo).
-Proof.
-  intros. assert (A := both_2_reflect _ _ X X0). repeat (rewrite existsb_in_iff; [| apply A]).
-  erewrite existsb_partition_kv_src; [| assumption | assumption | apply H]. apply Bool.orb_true_iff.
-Qed.
-
-Theorem not_in_partition_kv_src : forall {K V} kv fk fv (hi lo : list (K * V)) src,
-  (forall a b : K, Bool.reflect (a = b) (fk a b)) ->
-  (forall a b : V, Bool.reflect (a = b) (fv a b)) ->
-  partition_kv_src_with fk fv hi lo = Some src ->
-  ~In kv src <-> (~In kv hi /\ ~In kv lo).
-Proof.
-  intros. assert (A := both_2_reflect _ _ X X0). repeat (rewrite existsb_in_iff; [| apply A]).
-  erewrite existsb_partition_kv_src; [| assumption | assumption | apply H].
-  repeat rewrite Bool.not_true_iff_false. apply Bool.orb_false_iff.
-Qed.
-
-Theorem partition_kv_src_works : forall {K V} fk fv (hi lo : list (K * V)) src,
-  (forall a b : K, Bool.reflect (a = b) (fk a b)) ->
-  (forall a b : V, Bool.reflect (a = b) (fv a b)) ->
-  partition_kv_src_with fk fv hi lo = Some src ->
-  PartitionKV src hi lo.
-Proof.
-  intros. generalize dependent fk. generalize dependent fv. generalize dependent lo. generalize dependent src.
-  induction hi; intros; simpl in *. { invert H. constructor. } assert (A := both_2_reflect _ _ X X0).
-  destruct a. destruct (partition_kv_src_with fk fv hi lo) as [p |] eqn:Ep; [| discriminate H].
-  erewrite existsb_partition_kv_src in H; [| assumption | assumption | apply Ep].
-  destruct (existsb (both_2 fk fv (k, v)) hi) eqn:Eh; simpl in *.
-  - invert H. apply existsb_in_iff in Eh; [| assumption]. apply PartitionKVCpHi. { assumption. }
-    eapply IHhi. { apply X0. } { apply X. } assumption.
-  - apply existsb_in_iff_not in Eh; [| assumption]. destruct (existsb_in _ k (map fst hi) X).
-    + admit. (* <-- This is the problem! *)
-    + apply PartitionKVCpLo.
-    apply PartitionKVCpLo. destruct (existsb (both_2 fk fv (k, v)) lo) eqn:El; simpl in *.
-    + invert H. 
-
-  destruct (existsb (both_2 fk fv (k, v)) p) eqn:Ee.
-  - invert H. erewrite existsb_partition_kv_src in Ee; [| assumption | assumption | apply Ep].
-    apply Bool.orb_prop in Ee as [Ee | Ee]; (apply existsb_in_iff in Ee; [| assumption]).
-    + apply PartitionKVCpHi. { assumption. } eapply IHhi. { apply X0. } { apply X. } assumption.
-    + 
-    apply existsb_in_iff in Ee; [| assumption]. apply PartitionKVCpHi. { assumption. } erewrite count_partition_kv_src in n; [| assumption | assumption | apply Ep].
-    destruct (count (both_2 fk fv) (k, v) lo) eqn:El.
-    + destruct (count (both_2 fk fv) (k, v) hi) eqn:Eh. { contradiction n. reflexivity. } clear n.
-      apply PartitionKVCpHi. { Search count. apply count_in.
-    destruct (count_existsb _ (k, v) lo A) eqn:El.
-    apply PartitionKVCpHi.
-    + apply count_partition
-
-  destruct a. destruct (existsb (ap_fst_2 f k) (partition_kv_src_with f hi lo)) eqn:E.
-  - rewrite existsb_partition_kv_src in E; [| assumption]. apply Bool.orb_prop in E as [E | E].
-    + apply PartitionKVCpHi; [| apply IHhi]. ; assumption.
-    + destruct (existsb_in f a hi X).
-      * apply PartitionCpHi; [| apply IHhi]; assumption.
-      * apply PartitionCpLo; [| | apply IHhi]; assumption.
-  - apply not_in_partition_kv_src in n as [Hhi Hlo]; [| apply X]. apply PartitionMove; [assumption | | apply IHhi; assumption].
-    intro C. apply in_partition_kv_src in C as [C | C]; [| | assumption]. { apply Hhi in C as []. } apply Hlo in C as [].
-Qed.
-
-Theorem reflect_partition_kv_src : forall {T} (f : T -> T -> bool) src hi lo,
-  (forall a b, Bool.reflect (a = b) (f a b)) ->
-  (partition_kv_src_with f hi lo = src <-> Partition src hi lo).
-Proof.
-  split; intros.
-  - subst. apply partition_kv_src_works. assumption.
-  - eapply partition_kv_deterministic. { apply partition_kv_src_works. assumption. } assumption.
-Qed.
-
-Definition ap_fst {A B C} : (A -> C) -> ((A * B) -> C) := fun f x => let (a, b) := x in f a.
-
-Lemma existsb_map_fst : forall {A B} li f f' x y,
-  (forall (a a' : A) (b b' : B), f (a, b) (a', b') = f' a a') ->
-  existsb (f (x, y)) li = existsb (f' x) (map fst li).
-Proof.
-  induction li; intros; simpl in *. { reflexivity. }
-  destruct a. simpl. rewrite H. destruct (f' x a). { reflexivity. } apply IHli. assumption.
-Qed.
-
-Lemma map_fst_partition_kv_src : forall {A B} f f' hi lo,
-  (forall (a a' : A) (b b' : B), f (a, b) (a', b') = f' a a') ->
-  map fst (partition_kv_src_with f hi lo) = partition_kv_src_with f' (map fst hi) (map fst lo).
-Proof.
-  intros. generalize dependent lo. generalize dependent f'. generalize dependent f.
-  induction hi; intros; simpl in *. { reflexivity. }
-  destruct a. simpl. rewrite (existsb_map_fst _ f f' _ _ H). rewrite (IHhi _ _ H).
-  destruct (existsb (f' a) (partition_kv_src_with f' (map fst hi) (map fst lo))) eqn:E.
-  - apply IHhi. assumption.
-  - simpl. f_equal. apply IHhi. assumption.
-Qed.
-
-Theorem partition_kv_map_fst : forall {A B} f f' hi lo,
-  (forall a b : A, Bool.reflect (a = b) (f' a b)) ->
-  (forall (a a' : A) (b b' : B), f (a, b) (a', b') = f' a a') ->
-  Partition (map fst (partition_kv_src_with f hi lo)) (map fst hi) (map fst lo).
-Proof.
-  intros. erewrite map_fst_partition_kv_src. { apply partition_kv_src_works. apply X. } assumption.
-Qed.
-
-Definition fst_cmp {A B} := fun (a : string * A) (b : string * B) => eqb (fst a) (fst b).
-
-Lemma has_cmp_fst : forall {T} li s t,
-  existsb (@fst_cmp T T (s, t)) li = existsb (eqb s) (map fst li).
-Proof.
-  intros T li. induction li; intros; simpl in *. { reflexivity. }
-  destruct a. unfold fst_cmp. simpl in *. destruct (eqb s s0). { reflexivity. }
-  apply (IHli _ t).
-Qed.
-
-Fixpoint set_diff {T} (a b : list (string * T)) :=
-  match a with
-  | [] => []
-  | hd :: tl =>
-      let recursed := set_diff tl b in
-      if (existsb (fst_cmp hd) tl || existsb (fst_cmp hd) b)%bool then recursed else hd :: recursed
+Fixpoint partition_kv_pf_fast {K V} acc fk (fv : V -> V -> bool) hi lo : option (list (K * V)) :=
+  match hi with
+  | [] => Some acc
+  | (k, v) :: tl =>
+      match find_kv fk k lo with
+      | Some vl => if fv v vl then partition_kv_pf_fast acc fk fv tl lo else None
+      | None =>
+          match find_kv fk k tl with
+          | Some vh => if fv v vh then partition_kv_pf_fast acc fk fv tl lo else None
+          | None => partition_kv_pf_fast ((k, v) :: acc) fk fv tl lo
+          end
+      end
   end.
+Definition partition_kv_pf {K V} fk fv (hi lo : list (K * V)) :=
+  match partition_kv_pf_fast [] fk fv hi lo with
+  | None => None
+  | Some li => Some (rev' li)
+  end.
+Arguments partition_kv_pf {K V}/ fk fv hi lo.
 
-Theorem incl_set_diff : forall {T} (a b : list (string * T)),
-  incl (set_diff a b) a.
+Lemma partition_kv_pf_fast_app : forall {K V} hd tl fk fv hi lo,
+  partition_kv_pf_fast (hd ++ tl) fk fv hi lo = option_map (fun li => li ++ tl) (@partition_kv_pf_fast K V hd fk fv hi lo).
 Proof.
-  unfold incl. induction a; intros; simpl in *. { destruct H. }
-  destruct (existsb (fst_cmp a) a0) eqn:Ea; simpl in *. { right. eapply IHa. apply H. }
-  destruct (existsb (fst_cmp a) b) eqn:Eb; simpl in *. { right. eapply IHa. apply H. }
-  destruct H. { left. assumption. } right. eapply IHa. apply H.
+  intros K V hd tl fk fv hi. generalize dependent hd. generalize dependent tl.
+  generalize dependent fk. generalize dependent fv. induction hi; intros; simpl in *. { reflexivity. }
+  destruct a as [k v]. destruct (find_kv fk k lo) eqn:El.
+  - destruct (fv v v0). { apply IHhi. } reflexivity.
+  - destruct (find_kv fk k hi) eqn:Eh.
+    + destruct (fv v v0); [| reflexivity]. apply IHhi.
+    + apply (IHhi _ _ _ ((k, v) :: hd)).
 Qed.
 
-Theorem partition_kv_src_app : forall {T} (a b : list (string * T)),
-  partition_kv_src_with fst_cmp a b = set_diff a b ++ b.
+Theorem partition_kv_pf_fast_slow : forall {K V} fk fv hi lo,
+  partition_kv_pf fk fv hi lo = @partition_kv_pf_slow K V fk fv hi lo.
 Proof.
-  induction a; intros; simpl in *. { reflexivity. }
-  destruct a. repeat rewrite has_cmp_fst. erewrite map_fst_partition_kv_src;
-  [| intros; unfold fst_cmp; simpl; reflexivity]. rewrite (existsb_partition_kv_src _ _ _ _ eqb_spec).
-  destruct (existsb (eqb s) (map fst a0) || existsb (eqb s) (map fst b))%bool; simpl; f_equal; apply IHa.
+  intros K V fk fv hi. induction hi; intros; simpl in *. { reflexivity. }
+  destruct a as [k v]. destruct (find_kv fk k lo) eqn:El.
+  - destruct (fv v v0); [rewrite IHhi |]; destruct (partition_kv_pf_slow fk fv hi lo); reflexivity.
+  - destruct (find_kv fk k hi) eqn:Eh.
+    + destruct (fv v v0); [rewrite IHhi |]; destruct (partition_kv_pf_slow fk fv hi lo); reflexivity.
+    + rewrite (partition_kv_pf_fast_app [] [(k, v)]). rewrite <- IHhi.
+      destruct (partition_kv_pf_fast [] fk fv hi lo); [| reflexivity].
+      simpl in *. unfold rev'. repeat rewrite <- rev_alt. rewrite rev_app_distr. reflexivity.
+Qed.
+
+Theorem find_partition_kv_pf : forall {K V} pf hi lo,
+  @PartitionKV K V pf hi lo ->
+  forall k,
+  (forall v, ~FindKV k v lo) ->
+  forall v,
+  FindKV k v hi ->
+  FindKV k v pf.
+Proof.
+  intros K V pf hi lo Hp. induction Hp; intros; simpl in *.
+  - assumption.
+  - apply IHHp. { assumption. } invert H1. { apply H0 in H as []. } assumption.
+  - apply IHHp. { assumption. } invert H3; assumption.
+  - invert H3. { constructor. } constructor. { assumption. } apply IHHp; assumption.
+Qed.
+
+Theorem partition_kv_pf_irrelevant : forall {K V} fk fv hi lo pf,
+  (forall a b : K, Bool.reflect (a = b) (fk a b)) ->
+  (forall a b : V, Bool.reflect (a = b) (fv a b)) ->
+  partition_kv_pf_slow fk fv hi lo = Some pf ->
+  forall k,
+  find_kv fk k lo = None ->
+  find_kv fk k hi = None ->
+  find_kv fk k pf = None.
+Proof.
+  intros K V fk fv hi lo pf Xk Xv Hp k Hl Hh. generalize dependent fk. generalize dependent fv. generalize dependent lo.
+  generalize dependent pf. generalize dependent k. induction hi; intros; simpl in *. { invert Hp. reflexivity. }
+  destruct a as [ka va]. destruct (Xk k ka). { discriminate Hh. }
+  destruct (partition_kv_pf_slow fk fv hi lo) as [recursed |] eqn:Er; [| discriminate Hp].
+  destruct (find_kv fk ka lo) eqn:El.
+  - destruct (Xv va v); invert Hp. apply (IHhi _ _ _ _ Xv _ Xk Er); assumption.
+  - destruct (find_kv fk ka hi) eqn:Eh.
+    + destruct (Xv va v); invert Hp. apply (IHhi _ _ _ _ Xv _ Xk Er); assumption.
+    + invert Hp. simpl. destruct (Xk k ka). { contradiction n. } clear n0.
+      apply (IHhi _ _ _ _ Xv _ Xk Er); assumption.
+Qed.
+
+Theorem partition_kv_pf_works : forall {K V} fk fv (hi lo : list (K * V)) pf,
+  (forall a b : K, Bool.reflect (a = b) (fk a b)) ->
+  (forall a b : V, Bool.reflect (a = b) (fv a b)) ->
+  partition_kv_pf fk fv hi lo = Some pf ->
+  PartitionKV pf hi lo.
+Proof.
+  intros K V fk fv hi lo pf Xk Xv Hp. rewrite partition_kv_pf_fast_slow in Hp.
+  generalize dependent fk. generalize dependent fv. generalize dependent lo. generalize dependent pf.
+  induction hi; intros; simpl in *. { invert Hp. constructor. } destruct a as [k v].
+  destruct (partition_kv_pf_slow fk fv hi lo) as [recursed |] eqn:Er; [| discriminate Hp].
+  destruct (find_kv fk k lo) eqn:El. {
+    destruct (Xv v v0); invert Hp. apply PartitionKVCpLo.
+    - eapply reflect_find_kv. { apply Xk. } assumption.
+    - eapply IHhi. { apply Xv. } { apply Xk. } assumption. }
+  destruct (find_kv fk k hi) eqn:Eh.
+  - destruct (Xv v v0); invert Hp. eapply PartitionKVCpPf.
+    + apply (not_in_fst_find _ _ _ Xk). apply (find_kv_none _ _ _ Xk). assumption.
+    + eapply find_partition_kv_pf.
+      * apply (IHhi _ _ _ Xv _ Xk Er).
+      * apply (find_kv_none _ _ _ Xk). assumption. 
+      * apply (reflect_find_kv _ _ _ _ Xk). assumption.
+    + apply (reflect_find_kv _ _ _ _ Xk). assumption.
+    + apply (IHhi _ _ _ Xv _ Xk Er).
+  - invert Hp. apply PartitionKVMove; [| | | apply (IHhi _ _ _ Xv _ Xk Er)];
+    eapply (not_in_fst_find _ _ _ Xk); apply (find_kv_none _ _ _ Xk); try assumption.
+    apply (partition_kv_pf_irrelevant _ _ _ _ _ Xk Xv Er); assumption.
+Qed.
+
+Theorem reflect_partition_kv_pf : forall {K V} fk fv hi lo pf,
+  (forall a b : K, Bool.reflect (a = b) (fk a b)) ->
+  (forall a b : V, Bool.reflect (a = b) (fv a b)) ->
+  PartitionKV pf hi lo <-> partition_kv_pf fk fv hi lo = Some pf.
+Proof.
+  intros K V fk fv hi lo pf Xk Xv. split; intros; [| apply (partition_kv_pf_works _ _ _ _ _ Xk Xv H)].
+  rewrite partition_kv_pf_fast_slow. induction H; intros; simpl in *; [reflexivity | | |]; rewrite IHPartitionKV.
+  - apply (reflect_find_kv _ _ _ _ Xk) in H. rewrite H. destruct (Xv v v). { reflexivity. } contradiction n. reflexivity.
+  - eapply (not_in_fst_find_none _ _ _ Xk) in H. rewrite H. apply (reflect_find_kv _ _ _ _ Xk) in H1. rewrite H1.
+    destruct (Xv v v). { reflexivity. } contradiction n. reflexivity.
+  - eapply (not_in_fst_find_none _ _ _ Xk) in H. rewrite H.
+    eapply (not_in_fst_find_none _ _ _ Xk) in H1. rewrite H1. reflexivity.
+Qed.
+
+Theorem reflect_not_partition_kv_pf : forall {K V} fk fv hi lo,
+  (forall a b : K, Bool.reflect (a = b) (fk a b)) ->
+  (forall a b : V, Bool.reflect (a = b) (fv a b)) ->
+  partition_kv_pf fk fv hi lo = None <-> forall pf, ~PartitionKV pf hi lo.
+Proof.
+  intros K V fk fv hi lo Xk Xv. split; intros.
+  - intro C. apply (reflect_partition_kv_pf _ _ _ _ _ Xk Xv) in C. rewrite H in C. discriminate C.
+  - destruct (partition_kv_pf fk fv hi lo) eqn:Ep; [| reflexivity].
+    apply (reflect_partition_kv_pf _ _ _ _ _ Xk Xv) in Ep. apply H in Ep as [].
 Qed.
