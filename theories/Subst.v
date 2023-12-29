@@ -261,49 +261,38 @@ Proof.
 Qed.
 
 Theorem incl_partition_pf_fst : forall {T} hi lo,
-  incl (@partition_pf_slow (string * T) fst_cmp hi lo) lo.
+  incl (@partition_pf_slow (string * T) fst_cmp hi lo) hi.
 Proof.
   unfold incl. induction hi; intros; simpl in *. { destruct H. }
-  destruct (existsb (fst_cmp a) lo) eqn:El; simpl in *. { apply IHhi. assumption. }
-  destruct (existsb (fst_cmp a) hi) eqn:Eh; simpl in *. { apply IHhi. assumption. }
-  destruct a as [k1 v1]. destruct a0 as [k2 v2]. destruct H. Abort.
+  destruct (existsb (fst_cmp a) lo) eqn:El; simpl in *. { right. apply (IHhi _ _ H). }
+  destruct (existsb (fst_cmp a) hi) eqn:Eh; simpl in *. { right. apply (IHhi _ _ H). }
+  destruct a as [k1 v1]. destruct a0 as [k2 v2]. destruct H; [| right; apply (IHhi _ _ H)].
+  left. assumption.
+Qed.
 
-(*
 Theorem grand_unified_subst_structural_id : forall t,
   let P := fun p : _ * _ => let (x, f) := p in f (TmVarS x) = t in
   Forall P (grand_unified_subst_with remove_key_all t).
 Proof.
   induction t as [| | | | id arg a IHa b IHb | arg a IHa b IHb | a IHa b IHb]; simpl in *; repeat constructor; [| |
     apply Forall_app; split; apply Forall_smap; (eapply Forall_impl; [| try apply IHa; apply IHb]);
-    intros; destruct a0; rewrite H; reflexivity];
-  apply Forall_app; split; destruct arg; repeat rewrite slow_down. admit. admit. admit. admit.
-  simpl. eapply incl_Forall; [apply incl_partition_pf |].
-  - Search partition_pf.
-
-  induction t as [| | | | id arg a IHa b IHb | arg a IHa b IHb | a IHa b IHb];
-  subst; simpl in *; try solve [repeat constructor]; [| |
-    apply Forall_app; split; apply Forall_smap; (eapply Forall_impl; [| try apply IHa; apply IHb]);
-    intros; destruct a0; rewrite H; reflexivity];
-  rewrite partition_pf_app; apply Forall_app; (split; [
-    eapply incl_Forall; [apply incl_set_diff |]; apply Forall_smap; eapply Forall_impl; [| apply IHa];
-    intros [x s] H; rewrite H; reflexivity |
-    apply Forall_smap; destruct arg; [eapply incl_Forall; [apply remove_key_all_incl |] |];
-    (eapply Forall_impl; [| apply IHb]); intros [x f] E; rewrite E; reflexivity]).
+    intros; destruct a0; rewrite H; reflexivity]; repeat rewrite slow_down; destruct arg;
+  apply Forall_app; (split; [eapply incl_Forall; [apply incl_partition_pf_fst |] |]); apply Forall_smap;
+  try (eapply incl_Forall; [apply remove_key_all_incl |]); (eapply Forall_impl; [| try apply IHa; apply IHb]);
+  intros; destruct a0; rewrite H; reflexivity.
 Qed.
 
 Theorem grand_unified_subst_id : forall t,
   let P := fun p : _ * _ => let (x, f) := p in f (TmVarS x) = t in
   Forall P (grand_unified_subst t).
 Proof.
-  induction t as [| | | | id arg a IHa b IHb | arg a IHa b IHb | a IHa b IHb];
-  subst; simpl in *; try solve [repeat constructor]; [| |
+  induction t as [| | | | id arg a IHa b IHb | arg a IHa b IHb | a IHa b IHb]; simpl in *; repeat constructor; [| |
     apply Forall_app; split; apply Forall_smap; (eapply Forall_impl; [| try apply IHa; apply IHb]);
-    intros; destruct a0; rewrite H; reflexivity];
-  rewrite partition_pf_app; apply Forall_app; (split; [
-    eapply incl_Forall; [apply incl_set_diff |]; apply Forall_smap; eapply Forall_impl;
-    [| apply grand_unified_subst_structural_id]; intros [x f] E; rewrite E; reflexivity |
-    apply Forall_smap; destruct arg; [eapply incl_Forall; [apply remove_key_if_head_incl |] |];
-    (eapply Forall_impl; [| apply IHb]); intros [x f] E; rewrite E; reflexivity]).
+    intros; destruct a0; rewrite H; reflexivity]; repeat rewrite slow_down; destruct arg;
+  apply Forall_app; (split; [eapply incl_Forall; [apply incl_partition_pf_fst |] |]);
+  apply Forall_smap; try (eapply incl_Forall; [apply remove_key_if_head_incl |]);
+  (eapply Forall_impl; [| try apply grand_unified_subst_structural_id; apply IHb]);
+  intros; destruct a0; rewrite H; reflexivity.
 Qed.
 
 Theorem subst_id : forall x t s,
@@ -313,4 +302,3 @@ Proof.
   intros. unfold subst in *. destruct (pair_lookup x (grand_unified_subst t)) eqn:Ep; invert H.
   eapply pair_lookup_Forall in Ep; [| apply grand_unified_subst_id]. assumption.
 Qed.
-*)
