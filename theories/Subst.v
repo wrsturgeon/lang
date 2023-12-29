@@ -94,23 +94,23 @@ Fixpoint grand_unified_subst_with rm t : list (string * (term -> term)) :=
   | TmVarS s =>
       [(s, fun x => x)]
   | TmPack id arg ty curry =>
-      partition_src_with fst_cmp
-      (smap (fun f x => TmPack id arg (f x) curry) (grand_unified_subst_with remove_key_all ty))
-      (smap (fun f x => TmPack id arg ty (f x)) (
+      let lo := smap (fun f x => TmPack id arg ty (f x)) (
         let recursed := grand_unified_subst_with rm curry in
         match arg with
         | None => recursed
         | Some a => rm a recursed
-        end))
+        end) in
+      let hi := smap (fun f x => TmPack id arg (f x) curry) (grand_unified_subst_with remove_key_all ty) in
+      partition_pf fst_cmp hi lo ++ lo
   | TmForA arg ty body =>
-      partition_src_with fst_cmp
-      (smap (fun f x => TmForA arg (f x) body) (grand_unified_subst_with remove_key_all ty))
-      (smap (fun f x => TmForA arg ty (f x)) (
+      let lo := smap (fun f x => TmForA arg ty (f x)) (
         let recursed := grand_unified_subst_with rm body in
         match arg with
         | None => recursed
         | Some a => rm a recursed
-        end))
+        end) in
+      let hi := smap (fun f x => TmForA arg (f x) body) (grand_unified_subst_with remove_key_all ty) in
+      partition_pf fst_cmp hi lo ++ lo
   | TmAppl a b =>
       smap (fun f x => TmAppl (f x) b) (grand_unified_subst_with rm a) ++
       smap (fun f x => TmAppl a (f x)) (grand_unified_subst_with rm b)
@@ -144,23 +144,28 @@ Example grand_unified_subst_lambda :
     ("x", fun x => TmForA (Some "x") (TmVarS "T") (TmAppl (TmVarS "x") x))]%string.
 Proof. reflexivity. Qed.
 
+Lemma fst_cmp_eqb : forall {T} a a' b b',
+  @fst_cmp T T (a, b) (a', b') = eqb a a'.
+Proof. reflexivity. Qed.
+
 Theorem grand_unified_subst_structural_fv : forall t,
   fv_with remove_all t = map fst (grand_unified_subst_with remove_key_all t).
 Proof.
-  induction t; intros; subst; simpl in *; try reflexivity;
-  repeat rewrite IHt1; repeat rewrite IHt2; [| | repeat rewrite map_distr; repeat rewrite map_fst_smap; reflexivity];
-  destruct arg; repeat rewrite <- remove_all_key_eq; erewrite map_fst_partition_src; repeat rewrite map_fst_smap; reflexivity.
+  induction t; intros; subst; simpl in *; try reflexivity; repeat rewrite slow_down;
+  repeat rewrite IHt1; repeat rewrite IHt2; repeat rewrite map_distr; repeat rewrite map_fst_smap; [| | reflexivity];
+  destruct arg; f_equal; repeat rewrite <- partition_pf_fast_slow; try rewrite (map_fst_partition_pf _ _ _ _ fst_cmp_eqb);
+  repeat rewrite map_fst_smap; repeat rewrite remove_all_key_eq; reflexivity.
 Qed.
 
 Theorem grand_unified_subst_fv : forall t,
   fv t = map fst (grand_unified_subst t).
 Proof.
-  induction t; intros; subst; simpl in *; try reflexivity;
-  repeat rewrite IHt1; repeat rewrite IHt2; [| | rewrite map_distr; repeat rewrite map_fst_smap; reflexivity];
-  (erewrite map_fst_partition_src; [| unfold fst_cmp; simpl; reflexivity]);
-  repeat rewrite map_fst_smap; rewrite grand_unified_subst_structural_fv;
-  (destruct arg; [| reflexivity]); (destruct (grand_unified_subst_with remove_key_if_head t2) eqn:Eg; [reflexivity |]);
-  destruct p; simpl in *; (destruct (eqb s s0); reflexivity).
+  induction t; intros; simpl in *; try reflexivity; repeat rewrite slow_down;
+  repeat rewrite IHt1; repeat rewrite IHt2; repeat rewrite map_distr; repeat rewrite <- partition_pf_fast_slow;
+  repeat rewrite (map_fst_partition_pf _ _ _ _ fst_cmp_eqb); repeat rewrite map_fst_smap; [| | reflexivity];
+  repeat rewrite grand_unified_subst_structural_fv; (destruct arg; [| reflexivity]); repeat rewrite partition_pf_fast_slow;
+  (destruct (grand_unified_subst_with remove_key_if_head t2); [reflexivity |]);
+  destruct p as [v f]; simpl in *; destruct (eqb s v); reflexivity.
 Qed.
 (* WOOHOOOOOOOOOOOOOOO *)
 
@@ -255,15 +260,31 @@ Proof.
   unfold fst_cmp. simpl. apply eqb_neq in n. rewrite n. apply (IHli _ t).
 Qed.
 
+Theorem incl_partition_pf_fst : forall {T} hi lo,
+  incl (@partition_pf_slow (string * T) fst_cmp hi lo) lo.
+Proof.
+  unfold incl. induction hi; intros; simpl in *. { destruct H. }
+  destruct (existsb (fst_cmp a) lo) eqn:El; simpl in *. { apply IHhi. assumption. }
+  destruct (existsb (fst_cmp a) hi) eqn:Eh; simpl in *. { apply IHhi. assumption. }
+  destruct a as [k1 v1]. destruct a0 as [k2 v2]. destruct H. Abort.
+
+(*
 Theorem grand_unified_subst_structural_id : forall t,
   let P := fun p : _ * _ => let (x, f) := p in f (TmVarS x) = t in
   Forall P (grand_unified_subst_with remove_key_all t).
 Proof.
+  induction t as [| | | | id arg a IHa b IHb | arg a IHa b IHb | a IHa b IHb]; simpl in *; repeat constructor; [| |
+    apply Forall_app; split; apply Forall_smap; (eapply Forall_impl; [| try apply IHa; apply IHb]);
+    intros; destruct a0; rewrite H; reflexivity];
+  apply Forall_app; split; destruct arg; repeat rewrite slow_down. admit. admit. admit. admit.
+  simpl. eapply incl_Forall; [apply incl_partition_pf |].
+  - Search partition_pf.
+
   induction t as [| | | | id arg a IHa b IHb | arg a IHa b IHb | a IHa b IHb];
   subst; simpl in *; try solve [repeat constructor]; [| |
     apply Forall_app; split; apply Forall_smap; (eapply Forall_impl; [| try apply IHa; apply IHb]);
     intros; destruct a0; rewrite H; reflexivity];
-  rewrite partition_src_app; apply Forall_app; (split; [
+  rewrite partition_pf_app; apply Forall_app; (split; [
     eapply incl_Forall; [apply incl_set_diff |]; apply Forall_smap; eapply Forall_impl; [| apply IHa];
     intros [x s] H; rewrite H; reflexivity |
     apply Forall_smap; destruct arg; [eapply incl_Forall; [apply remove_key_all_incl |] |];
@@ -278,7 +299,7 @@ Proof.
   subst; simpl in *; try solve [repeat constructor]; [| |
     apply Forall_app; split; apply Forall_smap; (eapply Forall_impl; [| try apply IHa; apply IHb]);
     intros; destruct a0; rewrite H; reflexivity];
-  rewrite partition_src_app; apply Forall_app; (split; [
+  rewrite partition_pf_app; apply Forall_app; (split; [
     eapply incl_Forall; [apply incl_set_diff |]; apply Forall_smap; eapply Forall_impl;
     [| apply grand_unified_subst_structural_id]; intros [x f] E; rewrite E; reflexivity |
     apply Forall_smap; destruct arg; [eapply incl_Forall; [apply remove_key_if_head_incl |] |];
@@ -292,3 +313,4 @@ Proof.
   intros. unfold subst in *. destruct (pair_lookup x (grand_unified_subst t)) eqn:Ep; invert H.
   eapply pair_lookup_Forall in Ep; [| apply grand_unified_subst_id]. assumption.
 Qed.
+*)

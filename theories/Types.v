@@ -3,9 +3,11 @@ From Coq Require Export
   Sorting.Permutation.
 Export ListNotations.
 From Lang Require Import
+  Find
   FreeVariables
   Invert
   Partition
+  PartitionKV
   Subst
   Terms.
 
@@ -70,13 +72,13 @@ Inductive TypedWith (filter : string -> term -> list (string * term) -> list (st
       TypedWith WhereverKV extn ctxt ty kind ->
       TypedWith filter extn ctxa curry t ->
       match arg with None => eq | Some a => filter a ty end ctxc ctxa ->
-      Partition ctx ctxt ctxc ->
+      PartitionKV ctx ctxt ctxc ->
       TypedWith filter extn ctx (TmPack id arg ty curry) (TmForA arg ty t)
   | TyForA : forall ctx ctxt ctxc ctxa arg ty body t kind,
       TypedWith WhereverKV extn ctxt ty kind ->
       TypedWith filter extn ctxa body t ->
       match arg with None => eq | Some a => filter a ty end ctxc ctxa ->
-      Partition ctx ctxt ctxc ->
+      PartitionKV ctx ctxt ctxc ->
       TypedWith filter extn ctx (TmForA arg ty body) (TmForA arg ty t)
   | TyAppl : forall ctx ctxf ctxx f x arg ty body substituted,
       TypedWith filter extn ctxf f (TmForA arg ty body) ->
@@ -145,7 +147,7 @@ Proof.
     + (* dealing with bound variables *)
       simpl. constructor.
     + (* concatenating the contexts used to type the type and the body *)
-      apply PartitionMove; [| | apply PartitionDone]; intro C; destruct C as [].
+      apply PartitionKVMove; [| | | constructor]; intro C; destruct C as [].
   - (* deadling with bound variables *)
     simpl. constructor.
   - (* concatenating the contexts used to type the type and the body *)
@@ -226,6 +228,14 @@ Lemma wherever_fst : forall {A B} f s li post,
 Proof. intros. induction H; constructor; assumption. Qed.
 
 (*
+Lemma partition_kv_fst : forall {K V} pf hi lo,
+  @PartitionKV K V pf hi lo ->
+  Partition (map fst pf ++ map fst lo) (map fst hi) (map fst lo).
+Proof.
+  intros. induction H; simpl in *; repeat rewrite map_distr. { constructor. }
+  - constructor. 
+Qed.
+
 (* If a term `t` is typed in a context, then
  * that context has EXACTLY `fv t`, in order.
  * Fantastic that we can prove something this precise! *)
@@ -233,6 +243,11 @@ Theorem typed_free_in_structural : forall ctx t ty,
   TypedWith WhereverKV [] ctx t ty -> FreeInWith Wherever t (map fst ctx).
 Proof.
   intros. remember [] as extn eqn:Ex. generalize dependent Ex. remember WhereverKV as filter eqn:Ef. generalize dependent Ef.
+  induction H; intros; subst; simpl in *; try solve [constructor]; try contradiction H;
+  specialize (IHTypedWith1 eq_refl eq_refl); specialize (IHTypedWith2 eq_refl eq_refl);
+  [| | rewrite map_distr; econstructor; [apply IHTypedWith1 | apply IHTypedWith2 | reflexivity]];
+  destruct arg; subst; econstructor; try apply IHTypedWith1; try apply IHTypedWith2; try reflexivity.
+  [admit | admit | rewrite map_distr; econstructor; assumption].
   induction H; intros; subst; simpl in *; try solve [constructor]; try contradiction H; try destruct arg; subst;
   econstructor; try apply IHTypedWith1; try apply IHTypedWith2; try reflexivity;
   try (apply partition_map_fst; try apply H3; apply H2);

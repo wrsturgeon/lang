@@ -36,12 +36,13 @@ Fixpoint fv_with rm t :=
       fv_with rm f ++ fv_with rm x
   | TmPack _ arg ty curry
   | TmForA arg ty curry =>
-      partition_src_with eqb (fv_with remove_all (* <-- yes, hard-code this *) ty) (
+      let lo := (
         let recursed := fv_with rm curry in
         match arg with
         | None => recursed
         | Some a => rm a recursed
-        end)
+        end) in
+      partition_pf eqb (fv_with remove_all (* <-- yes, hard-code this *) ty) lo ++ lo
   end.
 Definition fv := fv_with remove_if_head.
 Arguments fv/ t.
@@ -179,16 +180,18 @@ Inductive FreeInWith : (string -> list string -> list string -> Prop) -> term ->
       FreeInWith cmp (TmAtom id) []
   | FreeVarS : forall cmp x,
       FreeInWith cmp (TmVarS x) [x]
-  | FreePack : forall cmp id arg ty curry va vb avb v,
+  | FreePack : forall cmp id arg ty curry va vb avb v pf,
       FreeInWith Wherever ty va ->
       FreeInWith cmp curry avb ->
-      Partition v va vb ->
+      Partition pf va vb ->
+      v = pf ++ vb ->
       (match arg with None => eq | Some a => cmp a end) vb avb ->
       FreeInWith cmp (TmPack id arg ty curry) v
-  | FreeForA : forall cmp arg ty curry va vb avb v,
+  | FreeForA : forall cmp arg ty curry va vb avb v pf,
       FreeInWith Wherever ty va ->
       FreeInWith cmp curry avb ->
-      Partition v va vb ->
+      Partition pf va vb ->
+      v = pf ++ vb ->
       (match arg with None => eq | Some a => cmp a end) vb avb ->
       FreeInWith cmp (TmForA arg ty curry) v
   | FreeAppl : forall cmp f x va vb v,
@@ -209,20 +212,24 @@ Proof.
   induction hd; intros; simpl in *; try rewrite IHhd; reflexivity.
 Qed.
 
+Theorem slow_down : forall {T} f hi lo,
+  rev' (@partition_pf_fast T [] f hi lo) = partition_pf_slow f hi lo.
+Proof. intros. rewrite <- partition_pf_fast_slow. reflexivity. Qed.
+
 Theorem reflect_fv_structural : forall t v,
   fv_with remove_all t = v <-> FreeInWith Wherever t v.
 Proof.
   split; intros.
-  - generalize dependent v. induction t; intros; subst; simpl in *; try solve [constructor];
+  - generalize dependent v. induction t; intros; subst; simpl in *; repeat rewrite slow_down; try solve [constructor];
     [| | econstructor; [apply IHt1 | apply IHt2 |]; reflexivity];
-    destruct arg; (econstructor; [apply IHt1 | apply IHt2 | |]);
+    destruct arg; (econstructor; [apply IHt1 | apply IHt2 | | |]);
     try reflexivity; try apply wherever_remove_all; try reflexivity;
-    apply partition_src_works; apply eqb_spec.
+    rewrite <- partition_pf_fast_slow; apply partition_pf_works; apply eqb_spec.
   - remember Wherever as cmp eqn:Ec. generalize dependent Ec.
-    induction H; intros; subst; simpl in *; try reflexivity;
-    specialize (IHFreeInWith1 eq_refl); specialize (IHFreeInWith2 eq_refl);
-    try destruct arg; subst; simpl in *; try reflexivity; repeat rewrite wherever_remove_all in *; subst;
-    (eapply partition_deterministic; [| apply H1]); apply partition_src_works; apply eqb_spec.
+    induction H; intros; subst; simpl in *; try reflexivity; repeat rewrite slow_down;
+    specialize (IHFreeInWith1 eq_refl); specialize (IHFreeInWith2 eq_refl); subst; [| | reflexivity];
+    destruct arg; repeat rewrite wherever_remove_all in *; subst; f_equal;
+    rewrite <- partition_pf_fast_slow; apply (reflect_partition_pf _ _ _ _ eqb_spec); assumption.
 Qed.
 
 Theorem reflect_fv : forall Cmp cmp t v,
@@ -231,25 +238,14 @@ Theorem reflect_fv : forall Cmp cmp t v,
 Proof.
   split; intros.
   - generalize dependent Cmp. generalize dependent cmp. generalize dependent v.
-    induction t; intros; subst; simpl in *; try solve [constructor];
-    [| | econstructor; [eapply IHt1; [| apply H] | eapply IHt2; [| apply H] |]; reflexivity];
-    destruct arg; (econstructor; [
-      apply reflect_fv_structural |
-      eapply IHt2; [| apply H] |
-      apply partition_src_works; apply eqb_spec |]);
-    try reflexivity; apply H; reflexivity.
-  - generalize dependent cmp. induction H0; intros; subst; simpl in *; try reflexivity.
-    + destruct arg.
-      * rewrite IHFreeInWith1; [| intros; apply wherever_remove_all]. rewrite IHFreeInWith2; [| assumption].
-        eapply partition_deterministic. { apply partition_src_works. apply eqb_spec. }
-        subst. apply H1 in H0. rewrite H0. assumption.
-      * rewrite IHFreeInWith1; [| intros; apply wherever_remove_all; reflexivity]. rewrite IHFreeInWith2; [| assumption].
-        eapply partition_deterministic. { apply partition_src_works. apply eqb_spec. } subst. assumption.
-    + destruct arg.
-      * rewrite IHFreeInWith1; [| intros; apply wherever_remove_all]. rewrite IHFreeInWith2; [| assumption].
-        eapply partition_deterministic. { apply partition_src_works. apply eqb_spec. }
-        subst. apply H1 in H0. rewrite H0. assumption.
-      * rewrite IHFreeInWith1; [| intros; apply wherever_remove_all; reflexivity]. rewrite IHFreeInWith2; [| assumption].
-        eapply partition_deterministic. { apply partition_src_works. apply eqb_spec. } subst. assumption.
-    + rewrite IHFreeInWith1; [| apply H0]. rewrite IHFreeInWith2; [| apply H0]. reflexivity.
+    induction t; intros; subst; simpl in *; repeat rewrite slow_down; try solve [constructor];
+    [| | econstructor; [apply (IHt1 _ _ eq_refl _ H) | apply (IHt2 _ _ eq_refl _ H) | reflexivity]];
+    destruct arg; (econstructor; [apply reflect_fv_structural; reflexivity | apply (IHt2 _ _ eq_refl _ H) | | reflexivity |]);
+    try apply H; try reflexivity; rewrite <- partition_pf_fast_slow; apply partition_pf_works; apply eqb_spec.
+  - generalize dependent cmp.
+    induction H0; intros; subst; simpl in *; try reflexivity; repeat rewrite slow_down;
+    [| | rewrite (IHFreeInWith1 _ H0); rewrite (IHFreeInWith2 _ H0); reflexivity];
+    (destruct arg; [apply H2 in H1 |]); subst; simpl in *; (rewrite IHFreeInWith2; [f_equal | assumption]);
+    rewrite <- partition_pf_fast_slow; apply (reflect_partition_pf _ _ _ _ eqb_spec);
+    (rewrite IHFreeInWith1; [assumption |]); intros; apply wherever_remove_all.
 Qed.
