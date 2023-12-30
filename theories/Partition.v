@@ -4,10 +4,8 @@ From Coq Require Export
   String.
 Export ListNotations.
 From Lang Require Import
-  Count
   InTactics
-  Invert
-  Remove.
+  Invert.
 
 (* Partition a context into types (which allow structural rules) and values (which don't). *)
 Inductive Partition {T} : list T -> list T -> list T -> Prop :=

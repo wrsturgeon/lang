@@ -36,10 +36,10 @@ Variant MaybeSubst : option string -> term -> term -> term -> Prop :=
 
 (* Prevent having two variables with the same name (fst) but different types (snd). *)
 Inductive MaybeConsKV {K V} k v : list (K * V) -> list (K * V) -> Prop :=
-  | MaybeConsKVNil :
-      MaybeConsKV k v [] []
   | MaybeConsKVCons : forall tl,
       MaybeConsKV k v tl ((k, v) :: tl)
+  | MaybeConsKVNil :
+      MaybeConsKV k v [] []
   | MaybeConsKVNotEq : forall hdk hdv tl,
       k <> hdk ->
       (* `hdv` can be the same, that's fine: two variables can have the same type *)
@@ -47,11 +47,11 @@ Inductive MaybeConsKV {K V} k v : list (K * V) -> list (K * V) -> Prop :=
   .
 
 Inductive WhereverKV {K V} k v : list (K * V) -> list (K * V) -> Prop :=
-  | WhereverKeyNil :
-      WhereverKV k v [] []
   | WhereverKeyHere : forall a b,
       WhereverKV k v a b ->
       WhereverKV k v a ((k, v) :: b)
+  | WhereverKeyNil :
+      WhereverKV k v [] []
   | WhereverKeyNotEq : forall hdk hdv a b,
       k <> hdk ->
       (* `v` can be the same, that's fine: two variables can have the same type *)
@@ -67,18 +67,20 @@ Inductive TypedWith (filter : string -> term -> list (string * term) -> list (st
       TypedWith filter extn [(id, t)] (TmVarS id) t
   | TyAtom : forall id,
       TypedWith filter extn [] (TmAtom id) (TmAtom id)
-  | TyPack : forall ctx ctxt ctxc ctxa id arg ty curry t kind,
+  | TyPack : forall pf ctx ctxt ctxc ctxa id arg ty curry t kind,
       AtomId id curry ->
       TypedWith WhereverKV extn ctxt ty kind ->
       TypedWith filter extn ctxa curry t ->
       match arg with None => eq | Some a => filter a ty end ctxc ctxa ->
-      PartitionKV ctx ctxt ctxc ->
+      PartitionKV pf ctxt ctxc ->
+      ctx = pf ++ ctxc ->
       TypedWith filter extn ctx (TmPack id arg ty curry) (TmForA arg ty t)
-  | TyForA : forall ctx ctxt ctxc ctxa arg ty body t kind,
+  | TyForA : forall pf ctx ctxt ctxc ctxa arg ty body t kind,
       TypedWith WhereverKV extn ctxt ty kind ->
       TypedWith filter extn ctxa body t ->
       match arg with None => eq | Some a => filter a ty end ctxc ctxa ->
-      PartitionKV ctx ctxt ctxc ->
+      PartitionKV pf ctxt ctxc ->
+      ctx = pf ++ ctxc ->
       TypedWith filter extn ctx (TmForA arg ty body) (TmForA arg ty t)
   | TyAppl : forall ctx ctxf ctxx f x arg ty body substituted,
       TypedWith filter extn ctxf f (TmForA arg ty body) ->
@@ -101,8 +103,8 @@ Arguments TypedWith filter extn ctx t ty.
 Arguments TyStar {filter} {extn} univ.
 Arguments TyVarS {filter} {extn} id t.
 Arguments TyAtom {filter} {extn} id.
-Arguments TyPack {filter} {extn} ctx ctxt ctxc ctxa id arg ty curry t kind Hatom Hty Hcurry Hbound Hsep.
-Arguments TyForA {filter} {extn} ctx ctxt ctxc ctxa    arg ty  body t kind       Hty Hbody  Hbound Hsep.
+Arguments TyPack {filter} {extn} pf ctx ctxt ctxc ctxa id arg ty curry t kind Hatom Hty Hcurry Hbound Hsep.
+Arguments TyForA {filter} {extn} pf ctx ctxt ctxc ctxa    arg ty  body t kind       Hty Hbody  Hbound Hsep.
 Arguments TyAppl {filter} {extn} ctx ctxf ctxx f x arg ty body substituted Hf Hx Hcat Hsubst.
 Arguments TyExtn {filter} {extn} E ctx ctx' t ty Hin Hextn Hty.
 
@@ -112,14 +114,7 @@ Arguments TypedWithExtensions/ extn ctx t ty.
 Definition Typed := TypedWithExtensions [].
 Arguments Typed/ ctx t ty.
 
-Ltac typed :=
-  try eapply TyStar;
-  try eapply TyVarS;
-  try eapply TyAtom;
-  try (eapply TyPack; [repeat econstructor | typed | typed | try reflexivity; try apply MaybeConsKVCons; try apply MaybeConsKVNil |]);
-  try (eapply TyForA; [typed | typed | try reflexivity; try apply MaybeConsKVCons; try apply MaybeConsKVNil |]);
-  try (eapply TyAppl; [typed | typed | reflexivity | econstructor]);
-  simpl in *.
+Lemma nil_nil_nil : forall {T}, @nil T = [] ++ []. Proof. reflexivity. Qed.
 
 (* TODO: CRUCIAL SAFETY THEOREMS: (1) Star n does not have type Star n, and (2) no term has type Void. *)
 
@@ -134,7 +129,6 @@ Arguments polymorphic_identity_ty/.
 Theorem dependent_types_woohoo :
   Typed [] polymorphic_identity_fn polymorphic_identity_ty.
 Proof.
-  (* typed. { dup_from_take. dup_from_nil. } { repeat constructor. } dup_from_nil. *)
   simpl. eapply TyForA.
   - (* typing `TmStar` *)
     apply TyStar.
@@ -145,13 +139,17 @@ Proof.
     + (* typing `TmVarS "x" : TmVarS "t"` *)
       apply TyVarS.
     + (* dealing with bound variables *)
-      simpl. constructor.
-    + (* concatenating the contexts used to type the type and the body *)
+      apply MaybeConsKVCons.
+    + (* partitioning the contexts used to type the type and the body *)
       apply PartitionKVMove; [| | | constructor]; intro C; destruct C as [].
+    + (* concatenating the contexts used to type the type and the body *)
+      simpl. reflexivity.
   - (* deadling with bound variables *)
-    simpl. constructor.
+    apply MaybeConsKVCons.
+  - (* partitioning the contexts used to type the type and the body *)
+    apply PartitionKVDone.
   - (* concatenating the contexts used to type the type and the body *)
-    constructor.
+    reflexivity.
 Qed.
 
 (* Showing that, given f: X -> Y and x: X, we can type (f x) : Y. *)
@@ -227,13 +225,14 @@ Lemma wherever_fst : forall {A B} f s li post,
   @Wherever   A   s     (map fst li) (map fst post).
 Proof. intros. induction H; constructor; assumption. Qed.
 
-(*
 Lemma partition_kv_fst : forall {K V} pf hi lo,
   @PartitionKV K V pf hi lo ->
-  Partition (map fst pf ++ map fst lo) (map fst hi) (map fst lo).
+  Partition (map fst pf) (map fst hi) (map fst lo).
 Proof.
   intros. induction H; simpl in *; repeat rewrite map_distr. { constructor. }
-  - constructor. 
+  - apply PartitionCpLo; [| assumption]. eapply find_kv_in_fst. apply H.
+  - apply PartitionCpPf; [assumption | | | assumption]; eapply find_kv_in_fst; [apply H0 | apply H1].
+  - apply PartitionMove; assumption.
 Qed.
 
 (* If a term `t` is typed in a context, then
@@ -245,14 +244,9 @@ Proof.
   intros. remember [] as extn eqn:Ex. generalize dependent Ex. remember WhereverKV as filter eqn:Ef. generalize dependent Ef.
   induction H; intros; subst; simpl in *; try solve [constructor]; try contradiction H;
   specialize (IHTypedWith1 eq_refl eq_refl); specialize (IHTypedWith2 eq_refl eq_refl);
-  [| | rewrite map_distr; econstructor; [apply IHTypedWith1 | apply IHTypedWith2 | reflexivity]];
-  destruct arg; subst; econstructor; try apply IHTypedWith1; try apply IHTypedWith2; try reflexivity.
-  [admit | admit | rewrite map_distr; econstructor; assumption].
-  induction H; intros; subst; simpl in *; try solve [constructor]; try contradiction H; try destruct arg; subst;
-  econstructor; try apply IHTypedWith1; try apply IHTypedWith2; try reflexivity;
-  try (apply partition_map_fst; try apply H3; apply H2);
-  try (eapply wherever_fst; try apply H2; apply H1);
-  symmetry; apply map_distr.
+  [| | rewrite map_distr; econstructor; [apply IHTypedWith1 | apply IHTypedWith2 | reflexivity]]; destruct arg; subst;
+  econstructor; try apply IHTypedWith1; try apply IHTypedWith2; try rewrite map_distr; try reflexivity;
+  try (apply partition_kv_fst; assumption); eapply wherever_fst; try apply H2; apply H1.
 Qed.
 
 (* If a term `t` is typed in a context, then
@@ -263,33 +257,67 @@ Theorem typed_free_in : forall ctx t ty,
 Proof.
   intros. simpl in *. remember [] as extn eqn:Ex. generalize dependent Ex.
   remember MaybeConsKV as filter eqn:Ef. generalize dependent Ef.
-  induction H; intros; subst; simpl in *; try solve [constructor]; try contradiction H; econstructor;
-  try (eapply typed_free_in_structural; try apply H0; apply H);
-  try apply IHTypedWith1; try apply IHTypedWith2; try reflexivity;
-  try (apply partition_map_fst; try apply H3; apply H2); try (symmetry; apply map_distr);
-  (destruct arg; subst; [| reflexivity]); eapply maybe_cons_fst; try apply H2; apply H1.
+  induction H; intros; subst; simpl in *; try solve [constructor]; try contradiction H;
+  repeat specialize (IHTypedWith1 eq_refl); repeat specialize (IHTypedWith2 eq_refl);
+  [| | rewrite map_distr; econstructor; [| | reflexivity]; assumption]; destruct arg; subst;
+  econstructor; try (eapply typed_free_in_structural; try apply H0; apply H); try rewrite map_distr; try reflexivity;
+  try (apply partition_kv_fst; assumption); try apply IHTypedWith2; eapply maybe_cons_fst; try apply H2; apply H1.
 Qed.
 
 Theorem fv_not_typed : forall t,
   fv t <> [] -> ~exists ty, Typed [] t ty.
 Proof.
-  intros t H [ty C]. destruct (fv t) eqn:Ef. { apply H. reflexivity. } clear H. eapply reflect_fv in Ef.
-  - apply typed_free_in in C. simpl in *.
-  Search remove_if_head.
+  intros t H [ty C]. destruct (fv t) eqn:Ef. { apply H. reflexivity. } clear H.
+  eapply reflect_fv in Ef; [| intros; apply maybe_cons_remove_if_head]. apply typed_free_in in C.
+  eapply reflect_fv in C ; [| intros; apply maybe_cons_remove_if_head].
+  eapply reflect_fv in Ef; [| intros; apply maybe_cons_remove_if_head].
+  rewrite Ef in C. discriminate C.
 Qed.
 
 Theorem typed_fv : forall ctx t ty,
   Typed ctx t ty ->
   fv t = map fst ctx.
-Proof. intros. apply reflect_fv. eapply typed_free_in. apply H. Qed.
+Proof. intros. eapply reflect_fv. { intros. apply maybe_cons_remove_if_head. } eapply typed_free_in. apply H. Qed.
 
-Theorem fv_type_not_typed : forall ty hd tl,
-  fv ty <> [] -> ~exists t, Typed [] t ty.
+(*
+TODO: This is damn fucking hard to prove.
+Theorem fv_type_not_typed : forall ty,
+  fv_with remove_all ty <> [] -> ~exists t, Typed [] t ty.
 Proof.
-  intros ty H [t C]. generalize dependent H. remember [] as ctx eqn:Ec. generalize dependent Ec.
-  unfold Typed in C. remember [] as extn eqn:Ex. generalize dependent Ex.
-  induction C; intros; try discriminate; try contradiction; subst; simpl in *.
-  - destruct ctxt; destruct ctxc; invert Ec. repeat specialize (IHC1 eq_refl). repeat specialize (IHC2 eq_refl).
+  intros ty H [t C]. simpl in *. generalize dependent H.
+  remember MaybeConsKV as filter eqn:Ef. generalize dependent Ef.
+  remember [] as extn eqn:Ee. generalize dependent Ee.
+  remember [] as ctx eqn:Ec. generalize dependent Ec.
+  induction C; intros; subst; simpl in *; try (contradiction H; reflexivity); [discriminate Ec | | |];
+  [destruct pf; destruct ctxc; invert Ec | destruct pf; destruct ctxc; invert Ec | destruct ctxf; destruct ctxx; invert Ec];
+  rewrite slow_down in *; [invert H1; [| invert H2 | invert H4] | invert H0; [| invert H1 | invert H3] |];
+  repeat specialize (IHC1 eq_refl); repeat specialize (IHC2 eq_refl); repeat rewrite slow_down in *. 3: {
+    destruct arg.
+    - admit.
+    - Search partition_pf.
+  
+  ; destruct arg; subst.
+  - admit.
+  - apply typed_free_in_structural in C1. simpl in *.
+
+  induction C; intros; subst; simpl in *; try contradiction; try discriminate; repeat rewrite slow_down in *; simpl in *;
+  [destruct pf; destruct ctxc; invert Ec | destruct pf; destruct ctxc; invert Ec | destruct ctxf; destruct ctxx; invert Ec].
+  - invert H1; [| invert H2 | invert H4]. destruct arg.
+    + apply typed_free_in_structural in C1. eapply reflect_fv_structural in C1. rewrite C1 in *. simpl in *.
+      destruct (fv_with remove_if_head t) eqn:Ef. { apply H3. reflexivity. } destruct ctxa.
+      * apply IHC2; try reflexivity. intro C. discriminate C.
+      * invert H0. invert C2; try solve [inversion H].
+      apply IHC2; try reflexivity; [| intro C; discriminate C].
+    + subst. apply typed_free_in_structural in C1. simpl in *.
+      eapply reflect_fv_structural in C1. rewrite C1 in *. simpl in *. apply IHC2; try reflexivity. assumption.
+  - 
+
+  ; subst; simpl in *; repeat rewrite slow_down in *;
+  [admit | admit | admit | destruct H].
+  admit. admit. admit.
+  - destruct pf; destruct ctxc; invert Ec. specialize (IHC1 eq_refl). specialize (IHC2 eq_refl).
+    destruct arg; simpl in *; subst. admit.
+    + invert H1. admit.
     assert (A := typed_free_in _ _ _ C1). apply reflect_fv in A. simpl in *. repeat rewrite A in *. simpl in *.
     destruct arg; [| subst; apply IHC2; try reflexivity; assumption]. destruct (mint ty).
     + 

@@ -4,11 +4,9 @@ From Coq Require Export
   String.
 Export ListNotations.
 From Lang Require Import
-  Count
   Find
   InTactics
-  Invert
-  Remove.
+  Invert.
 
 (* This whole file (as opposed to `Partition.v`)
  * stems from the subtle but crucial observation that

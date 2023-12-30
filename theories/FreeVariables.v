@@ -3,9 +3,7 @@ From Coq Require Export
 Export ListNotations.
 From Lang Require Import
   Invert
-  OptionBind
   Partition
-  Snoc
   Terms.
 
 Fixpoint remove_all x li :=
@@ -170,6 +168,19 @@ Variant MaybeCons {T} (hd : T) : list T -> list T -> Prop :=
       hd <> x ->
       MaybeCons hd (x :: etc) (x :: etc)
   .
+
+Lemma maybe_cons_remove_if_head : forall x li post,
+  MaybeCons x li post <-> remove_if_head x post = li.
+Proof.
+  split; intros.
+  - invert H; simpl in *.
+    + reflexivity.
+    + rewrite eqb_refl. reflexivity.
+    + apply eqb_neq in H0. rewrite H0. reflexivity.
+  - destruct post; simpl in *.
+    + subst. constructor.
+    + destruct (eqb_spec x s); subst; constructor. assumption.
+Qed.
 
 Inductive FreeInWith : (string -> list string -> list string -> Prop) -> term -> list string -> Prop :=
   | FreeVoid : forall cmp,
