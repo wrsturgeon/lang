@@ -4,6 +4,7 @@ From Coq Require Export
   String.
 Export ListNotations.
 From Lang Require Import
+  FstCmp
   InTactics
   Invert.
 
@@ -144,16 +145,6 @@ Proof.
   - eapply partition_deterministic. { apply partition_pf_works. assumption. } assumption.
 Qed.
 
-Definition ap_fst {A B C} : (A -> C) -> ((A * B) -> C) := fun f x => let (a, b) := x in f a.
-
-Lemma existsb_map_fst : forall {A B} li f f' x y,
-  (forall (a a' : A) (b b' : B), f (a, b) (a', b') = f' a a') ->
-  existsb (f (x, y)) li = existsb (f' x) (map fst li).
-Proof.
-  induction li; intros; simpl in *. { reflexivity. }
-  destruct a. simpl. rewrite H. destruct (f' x a). { reflexivity. } apply IHli. assumption.
-Qed.
-
 Lemma map_fst_partition_pf : forall {A B} f f' hi lo,
   (forall (a a' : A) (b b' : B), f (a, b) (a', b') = f' a a') ->
   map fst (partition_pf f hi lo) = partition_pf f' (map fst hi) (map fst lo).
@@ -172,14 +163,4 @@ Theorem partition_map_fst : forall {A B} f f' hi lo,
   Partition (map fst (partition_pf f hi lo)) (map fst hi) (map fst lo).
 Proof.
   intros. erewrite map_fst_partition_pf. { apply partition_pf_works. apply X. } assumption.
-Qed.
-
-Definition fst_cmp {A B} := fun (a : string * A) (b : string * B) => eqb (fst a) (fst b).
-
-Lemma has_cmp_fst : forall {T} li s t,
-  existsb (@fst_cmp T T (s, t)) li = existsb (eqb s) (map fst li).
-Proof.
-  intros T li. induction li; intros; simpl in *. { reflexivity. }
-  destruct a. unfold fst_cmp. simpl in *. destruct (eqb s s0). { reflexivity. }
-  apply (IHli _ t).
 Qed.

@@ -173,6 +173,12 @@ Proof.
     f_equal. apply IHlhs1. reflexivity.
   - subst. apply eq_term_refl.
 Qed.
+Theorem eq_term_reflect : forall lhs rhs,
+  Bool.reflect (lhs = rhs) (eq_term lhs rhs).
+Proof.
+  intros. destruct (eq_term lhs rhs) eqn:E; constructor. { apply reflect_eq_term. assumption. }
+  intro C. apply reflect_eq_term in C. rewrite E in C. discriminate C.
+Qed.
 
 Inductive TermContains (needle : term) : term -> Prop :=
   | TmContainsRefl :
