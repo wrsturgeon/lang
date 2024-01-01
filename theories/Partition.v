@@ -4,9 +4,12 @@ From Coq Require Export
   String.
 Export ListNotations.
 From Lang Require Import
+  Find
   FstCmp
   InTactics
-  Invert.
+  Invert
+  PartitionKV
+  StructuralFreeVariables.
 
 (* Partition a context into types (which allow structural rules) and values (which don't). *)
 Inductive Partition {T} : list T -> list T -> list T -> Prop :=
@@ -98,6 +101,10 @@ Proof.
   f_equal. rewrite rev_alt. apply IHhi.
 Qed.
 
+Theorem slow_down : forall {T} f hi lo,
+  rev' (@partition_pf_fast T [] f hi lo) = partition_pf_slow f hi lo.
+Proof. intros. rewrite <- partition_pf_fast_slow. reflexivity. Qed.
+
 Theorem in_partition_pf : forall {T} x f hi lo,
   (forall a b : T, Bool.reflect (a = b) (f a b)) ->
   In x (partition_pf f hi lo) <-> (In x hi /\ ~In x lo).
@@ -163,4 +170,33 @@ Theorem partition_map_fst : forall {A B} f f' hi lo,
   Partition (map fst (partition_pf f hi lo)) (map fst hi) (map fst lo).
 Proof.
   intros. erewrite map_fst_partition_pf. { apply partition_pf_works. apply X. } assumption.
+Qed.
+
+Theorem slow_down_app : forall {T} f hi lo,
+  @rev_append T (partition_pf_fast [] f hi lo) [] = partition_pf_slow f hi lo.
+Proof. intros. rewrite <- slow_down. reflexivity. Qed.
+
+Theorem slow_down_rev : forall {T} f hi lo,
+  @rev T (partition_pf_fast [] f hi lo) = partition_pf_slow f hi lo.
+Proof. intros. rewrite rev_alt. apply slow_down_app. Qed.
+
+Theorem partition_without_kv : forall {V} fv hi lo pf,
+  @partition_kv_pf _ V eqb fv hi lo = Some pf ->
+  map fst (partition_pf fst_cmp hi lo) = map fst pf.
+Proof.
+  intros. rewrite partition_pf_fast_slow. rewrite partition_kv_pf_fast_slow in H.
+  generalize dependent fv. generalize dependent lo. generalize dependent pf.
+  induction hi; intros; simpl in *. { invert H. reflexivity. } destruct a as [s v].
+  destruct (partition_kv_pf_slow eqb fv hi lo) eqn:Ep; [| discriminate H]. assert (Em := Ep). apply IHhi in Em.
+  repeat rewrite has_cmp_fst. destruct (find_kv eqb s lo) eqn:El. {
+    destruct (fv v v0) eqn:Ev; invert H. apply (reflect_find_kv _ _ _ _ eqb_spec) in El. apply find_kv_in_fst in El.
+    apply (existsb_in_iff _ _ _ eqb_spec) in El. rewrite El. assumption. }
+  destruct (find_kv eqb s hi) eqn:Eh. {
+    destruct (fv v v0) eqn:Ev; invert H. apply (reflect_find_kv _ _ _ _ eqb_spec) in Eh. apply find_kv_in_fst in Eh.
+    apply (existsb_in_iff _ _ _ eqb_spec) in Eh. rewrite Eh. rewrite Bool.orb_true_r. assumption. }
+  invert H. destruct (existsb (eqb s) (map fst lo) || existsb (eqb s) (map fst hi))%bool eqn:E. 2: {
+    simpl. f_equal. assumption. }
+  apply Bool.orb_true_iff in E as [E | E]; apply (existsb_in_iff _ _ _ eqb_spec) in E;
+  apply (in_fst_find_kv _ _ _ eqb_spec) in E as [found H]; apply (reflect_find_kv _ _ _ _ eqb_spec) in H;
+  rewrite H in *; discriminate.
 Qed.

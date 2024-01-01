@@ -50,6 +50,17 @@ Proof.
       eapply IHli. { apply A. } assumption.
 Qed.
 
+Theorem in_fst_find_kv : forall {K V} f k li,
+  (forall a b : K, Bool.reflect (a = b) (f a b)) ->
+  In k (map fst li) ->
+  exists v, @FindKV K V k v li.
+Proof.
+  intros. generalize dependent k. induction li; intros; destruct H; destruct a as [ka va]; simpl in *; subst.
+  - exists va. constructor.
+  - destruct (X k ka). { exists va. subst. constructor. }
+    apply IHli in H as [v IH]. exists v. constructor; assumption.
+Qed.
+
 Theorem find_kv_deterministic : forall {K V} k v v' li,
   @FindKV K V k v li ->
   FindKV k v' li ->

@@ -162,6 +162,11 @@ Proof.
       simpl in *. unfold rev'. repeat rewrite <- rev_alt. rewrite rev_app_distr. reflexivity.
 Qed.
 
+Theorem slow_down_kv : forall {K V} fk fv hi lo,
+  match partition_kv_pf_fast [] fk fv hi lo with None => None | Some li => Some (rev' li) end =
+  @partition_kv_pf_slow K V fk fv hi lo.
+Proof. intros. rewrite <- partition_kv_pf_fast_slow. reflexivity. Qed.
+
 Theorem find_partition_kv_pf : forall {K V} pf hi lo,
   @PartitionKV K V pf hi lo ->
   forall k,

@@ -152,10 +152,6 @@ Arguments FreeIn t vs.
 Definition Closed := fun t => FreeIn t [].
 Arguments Closed t/.
 
-Theorem slow_down : forall {T} f hi lo,
-  rev' (@partition_pf_fast T [] f hi lo) = partition_pf_slow f hi lo.
-Proof. intros. rewrite <- partition_pf_fast_slow. reflexivity. Qed.
-
 Theorem reflect_fv : forall t v,
   (fv t = v <-> FreeIn t v).
 Proof.

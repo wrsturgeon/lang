@@ -136,6 +136,12 @@ Proof.
   destruct lhs; destruct rhs; try discriminate H; [| reflexivity].
   simpl in H. apply eqb_eq in H. subst. reflexivity.
 Qed.
+Theorem eq_opt_spec : forall lhs rhs,
+  Bool.reflect (lhs = rhs) (eq_opt lhs rhs).
+Proof.
+  intros. destruct (eq_opt lhs rhs) eqn:E; constructor. { rewrite reflect_eq_opt in E. assumption. }
+  intro C. apply reflect_eq_opt in C. rewrite E in C. discriminate C.
+Qed.
 
 Fixpoint eq_term lhs rhs :=
   match lhs, rhs with
@@ -173,7 +179,7 @@ Proof.
     f_equal. apply IHlhs1. reflexivity.
   - subst. apply eq_term_refl.
 Qed.
-Theorem eq_term_reflect : forall lhs rhs,
+Theorem eq_term_spec : forall lhs rhs,
   Bool.reflect (lhs = rhs) (eq_term lhs rhs).
 Proof.
   intros. destruct (eq_term lhs rhs) eqn:E; constructor. { apply reflect_eq_term. assumption. }
