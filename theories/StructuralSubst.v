@@ -1,10 +1,14 @@
 From Coq Require Export
   List.
 Export ListNotations.
+From Coq Require Import
+  Ascii.
 From Lang Require Import
   FstCmp
-  StructuralHole
   Invert
+  NonEmpty
+  SplitRemove
+  StructuralHole
   StructuralFreeVariables
   Terms.
 
@@ -167,12 +171,14 @@ Proof.
   - rewrite IHt1. rewrite IHt2. reflexivity.
 Qed.
 
-Theorem structural_subst_fv : forall x y t,
+Theorem not_in_structural_subst_fv : forall x y t,
   ~In x (structural_fv y) ->
   ~In x (structural_fv (structural_subst x y t)).
 Proof.
-  intros. generalize dependent x. generalize dependent y. induction t; intros; simpl in *; intro C; try solve [destruct C];
-  [destruct (eqb_spec id x); subst; simpl in *; [apply H in C as [] |]; destruct C; [| destruct H0]; apply n; assumption | | |];
+  intros. rewrite structural_fv_fast_slow in *. generalize dependent x. generalize dependent y.
+  induction t; intros; simpl in *; intro C; try solve [destruct C];
+  [destruct (eqb_spec id x); subst; simpl in *;
+    [apply H in C as [] |]; destruct C; [| destruct H0]; apply n; assumption | | |];
   specialize (IHt1 _ _ H); specialize (IHt2 _ _ H); try destruct arg; apply in_app_iff in C as [C | C];
   try apply IHt1 in C as []; try apply IHt2 in C as []; simpl in *;
   (destruct (eqb_spec s x); [subst; eapply in_remove_all; apply C |]);
@@ -229,4 +235,140 @@ Proof.
     + apply eqb_neq in H. rewrite eqb_sym in H. rewrite H. reflexivity.
     + destruct (eq_opt_spec arg (Some x)). { subst. contradiction H. reflexivity. } reflexivity.
     + destruct (eq_opt_spec arg (Some x)). { subst. contradiction H. reflexivity. } reflexivity.
+Qed.
+
+(* doesn't make sense with non-structural holes, so it's okay to drop the `structural_` *)
+Fixpoint closed_hole h :=
+  match h with
+  | SHoleHere => false
+  | SHoleTerm _ => true
+  | SHolePack _ _ ty curry => andb (closed_hole ty) (closed_hole curry)
+  | SHoleForA _ ty body => andb (closed_hole ty) (closed_hole body)
+  | SHoleAppl f x => andb (closed_hole f) (closed_hole x)
+  end.
+
+Inductive ClosedHole : structural_hole -> Prop :=
+  | ClosedHoleTerm : forall t,
+      ClosedHole (SHoleTerm t)
+  | ClosedHolePack : forall id arg ty curry,
+      ClosedHole ty ->
+      ClosedHole curry ->
+      ClosedHole (SHolePack id arg ty curry)
+  | ClosedHoleForA : forall arg ty body,
+      ClosedHole ty ->
+      ClosedHole body ->
+      ClosedHole (SHoleForA arg ty body)
+  | ClosedHoleAppl : forall f x,
+      ClosedHole f ->
+      ClosedHole x ->
+      ClosedHole (SHoleAppl f x)
+  .
+
+Theorem reflect_closed_here : forall h,
+  Bool.reflect (ClosedHole h) (closed_hole h).
+Proof.
+  induction h; simpl in *.
+  - constructor. intro C. invert C.
+  - constructor. constructor.
+  - invert IHh1. 2: { constructor. intro C. invert C. apply H0 in H3 as []. }
+    invert IHh2; constructor. { constructor; assumption. } intro C. invert C. apply H2 in H8 as [].
+  - invert IHh1. 2: { constructor. intro C. invert C. apply H0 in H3 as []. }
+    invert IHh2; constructor. { constructor; assumption. } intro C. invert C. apply H2 in H7 as [].
+  - invert IHh1. 2: { constructor. intro C. invert C. apply H0 in H3 as []. }
+    invert IHh2; constructor. { constructor; assumption. } intro C. invert C. apply H2 in H6 as [].
+Qed.
+
+Theorem closed_iff_identity : forall h,
+  ClosedHole h <-> forall x y, sfill h x = sfill h y.
+Proof.
+  split.
+  - intro H. induction H; intros; simpl in *; try rename x into x0;
+    try rewrite (IHClosedHole1 x0 y); try rewrite (IHClosedHole2 x0 y); try reflexivity.
+  - induction h; intros; simpl in *; try constructor; try apply IHh1; try apply IHh2;
+    try (intros; specialize (H x y); invert H; reflexivity). specialize (H TmVoid (TmStar O)). discriminate H.
+Qed.
+
+Definition structurally_closed t := match structural_fv t with [] => true | _ :: _ => false end.
+Arguments structurally_closed/ t.
+
+Definition StructurallyClosed t := StructurallyFreeIn t [].
+Arguments StructurallyClosed/ t.
+
+Theorem reflect_structurally_closed : forall t,
+  Bool.reflect (StructurallyClosed t) (structurally_closed t).
+Proof.
+  intros. unfold structurally_closed. unfold StructurallyClosed. remember (structural_fv t) as f eqn:Ef.
+  destruct f; constructor. { apply reflect_structural_fv. symmetry. assumption. }
+  intro C. apply reflect_structural_fv in C. rewrite <- Ef in C. discriminate C.
+Qed.
+
+Lemma ne_intersp_cons : forall {T} li a intersp,
+  let f := fun hd => @app T (hd ++ intersp) in
+  ne_intersp f (ne_map_hd (cons a) li) = a :: (ne_intersp f li).
+Proof. induction li; intros; simpl in *. { reflexivity. } unfold f. simpl. reflexivity. Qed.
+
+Lemma ne_intersp_splitrm : forall {T} (a b : list T) p intersp,
+  let f := fun hd => app (hd ++ intersp) in
+  ne_intersp f (splitrm_slow p a) ++ ne_intersp f (splitrm_slow p b) = ne_intersp f (splitrm_slow p (a ++ b)).
+Proof.
+  induction a; intros; simpl in *. { reflexivity. }
+  destruct (p a) eqn:E; simpl in *. { unfold f. simpl in *. rewrite <- app_assoc. rewrite IHa. reflexivity. }
+  unfold f. repeat rewrite ne_intersp_cons. simpl. f_equal. apply IHa.
+Qed.
+
+Lemma splitrm_remove_all : forall li x,
+  splitrm_slow (eqb x) (remove_all x li) = NESton (remove_all x li).
+Proof.
+  induction li; intros; simpl in *. { reflexivity. } destruct (eqb x a) eqn:E. { apply IHli. }
+  simpl. rewrite E. rewrite IHli. reflexivity.
+Qed.
+
+Lemma splitrm_remove_all_neq : forall li x y,
+  x <> y ->
+  splitrm_slow (eqb x) (remove_all y li) = ne_map (remove_all y) (splitrm_slow (eqb x) li).
+Proof.
+  induction li; intros; simpl in *. { reflexivity. } destruct (eqb_spec x a); destruct (eqb_spec y a); subst; simpl in *.
+  - contradiction H. reflexivity.
+  - rewrite eqb_refl. f_equal. apply IHli. assumption.
+  - rewrite IHli; [| assumption]. induction (splitrm_slow (eqb x) li); simpl; rewrite eqb_refl; reflexivity.
+  - apply eqb_neq in n. rewrite n. rewrite IHli; [| assumption]. apply eqb_neq in n0.
+    induction (splitrm_slow (eqb x) li); simpl; rewrite n0; reflexivity.
+Qed.
+
+(* This doesn't work, since substituting a non-closed term might capture a lambda argument. *)
+(*
+Theorem structural_subst_fv : forall x y t,
+  structural_fv (structural_subst x y t) =
+  ne_intersp
+    (fun hd => app (hd ++ structural_fv y))
+    (splitrm (eqb x) (structural_fv t)).
+Proof.
+  intros. rewrite splitrm_fast_slow. generalize dependent x. generalize dependent y.
+  induction t; intros; simpl in *; try reflexivity.
+  - destruct (eqb_spec id x). { subst. rewrite eqb_refl. simpl. rewrite app_nil_r. reflexivity. }
+    apply eqb_neq in n. rewrite eqb_sym in n. rewrite n. reflexivity.
+  - rewrite IHt1. destruct arg as [arg |]; simpl in *.
+    + rewrite <- ne_intersp_splitrm. f_equal. destruct (eqb_spec arg x); simpl in *.
+      * subst. rewrite splitrm_remove_all. reflexivity.
+      * shelve.
+    + rewrite IHt2. apply ne_intersp_splitrm.
+    Unshelve. rewrite splitrm_remove_all_neq; [| intro C; subst; apply n; reflexivity]. rewrite IHt2. Abort.
+*)
+
+Theorem structural_subst_fv : forall x y t,
+  StructurallyClosed y ->
+  structural_fv (structural_subst x y t) = remove_all x (structural_fv t).
+Proof.
+  intros. repeat rewrite structural_fv_fast_slow. simpl in *. generalize dependent x. generalize dependent y.
+  induction t; intros; simpl in *; try reflexivity.
+  - destruct (eqb_spec id x).
+    + subst. rewrite eqb_refl. simpl. rewrite <- structural_fv_fast_slow. apply reflect_structural_fv. assumption.
+    + apply eqb_neq in n. rewrite eqb_sym in n. rewrite n. reflexivity.
+  - specialize (IHt1 _ H). specialize (IHt2 _ H). rewrite IHt1.
+    destruct arg as [arg |]; simpl in *; rewrite remove_all_app; f_equal; [| apply IHt2].
+    destruct (eqb_spec arg x). { subst. symmetry. apply remove_all_shadow. } rewrite remove_all_swap. f_equal. apply IHt2.
+  - specialize (IHt1 _ H). specialize (IHt2 _ H). rewrite IHt1.
+    destruct arg as [arg |]; simpl in *; rewrite remove_all_app; f_equal; [| apply IHt2].
+    destruct (eqb_spec arg x). { subst. symmetry. apply remove_all_shadow. } rewrite remove_all_swap. f_equal. apply IHt2.
+  - specialize (IHt1 _ H). specialize (IHt2 _ H). rewrite remove_all_app. rewrite IHt1. f_equal. apply IHt2.
 Qed.

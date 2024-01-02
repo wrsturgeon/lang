@@ -3,108 +3,134 @@ From Coq Require Export
 Export ListNotations.
 From Lang Require Import
   FreeVariables
-  FstCmp
-  Hole
   Invert
   Partition
-  PartitionKV
+  SplitRemove
   StructuralFreeVariables
+  StructuralHole
   StructuralSubst
   Terms.
 
-Definition remove_key_if_head {T} x (li : list (string * T)) :=
-  match li with
-  | [] => []
-  | (s, f) :: tl => if eqb x s then tl else li
-  end.
-
-Lemma remove_if_head_key_eq : forall {T} x (li : list (string * T)),
-  map fst (remove_key_if_head x li) = remove_if_head x (map fst li).
-Proof.
-  intros. generalize dependent x. induction li; intros; simpl in *. { reflexivity. }
-  destruct a. simpl. destruct (eqb x s) eqn:E. { reflexivity. } simpl. reflexivity.
-Qed.
-
-Theorem incl_remove_key : forall {T} x (li : list (string * T)),
-  incl (remove_key_all x li) (remove_key_if_head x li).
-Proof.
-  intros. unfold incl. generalize dependent x. induction li; intros; simpl in *. { destruct H. }
-  destruct a. destruct a0. destruct (eqb_spec x s).
-  - subst. apply IHli in H. unfold remove_key_if_head in H. destruct li. { destruct H. }
-    destruct p. destruct (eqb s s1); [right |]; assumption.
-  - destruct H. { invert H. left. reflexivity. }
-    apply IHli in H. unfold remove_key_if_head in H. destruct li. { destruct H. }
-    destruct p. destruct (eqb x s1); [right |]; right; assumption.
-Qed.
-
-(* Ludicrous that this is the easiest correct definition to write.
- * Generates substitution functions for every free variable at once. *)
-Fixpoint grand_unified_subst t : option (list (string * hole)) :=
+Fixpoint subst_hole_acc acc x t :=
   match t with
   | TmVoid
   | TmStar _
   | TmAtom _ =>
-      Some []
-  | TmVarS s =>
-      Some [(s, HoleHere)]
+      (SHoleTerm t, acc)
+  | TmVarS z =>
+      if eqb z x then
+        match acc with
+        (* no shadowing *)
+        | Some O => (SHoleHere, None)
+        (* shadowed *)
+        | Some (S n) => (SHoleTerm t, Some n)
+        (* already used *)
+        | None => (SHoleTerm t, None)
+        end
+      else
+        (SHoleTerm t, acc)
   | TmPack id arg ty curry =>
-      match grand_unified_subst curry with
-      | None => None
-      | Some recursed =>
-        let lo := smap (HolePackCurry id arg ty) (
-          match arg with
-          | None => recursed
-          | Some a => remove_key_if_head a recursed
-          end) in
-        let hi := smap (fun h => HolePackTy id arg h curry) (structural_grand_unified_subst ty) in
-        option_map (fun li => li ++ lo) (partition_kv_pf eqb eq_hole hi lo)
-      end
+      let (scurry, ac1) := subst_hole_acc (if eq_opt arg (Some x) then option_map S acc else acc) x curry in
+      (SHolePack id arg (structural_subst_hole x ty) scurry, ac1)
   | TmForA arg ty body =>
-      match grand_unified_subst body with
-      | None => None
-      | Some recursed =>
-        let lo := smap (HoleForABody arg ty) (
-          match arg with
-          | None => recursed
-          | Some a => remove_key_if_head a recursed
-          end) in
-        let hi := smap (fun h => HoleForATy arg h body) (structural_grand_unified_subst ty) in
-        option_map (fun li => li ++ lo) (partition_kv_pf eqb eq_hole hi lo)
-      end
-  | TmAppl f x =>
-      match grand_unified_subst f, grand_unified_subst x with
-      | Some sf, Some sx => Some (smap (fun h => HoleApplF h x) sf ++ smap (HoleApplX f) sx)
-      | _, _ => None
-      end
+      let (sbody, ac1) := subst_hole_acc (if eq_opt arg (Some x) then option_map S acc else acc) x body in
+      (SHoleForA arg (structural_subst_hole x ty) sbody, ac1)
+  | TmAppl f z =>
+      let (sf, ac1) := subst_hole_acc acc x f in
+      let (sz, ac2) := subst_hole_acc ac1 x z in
+      (SHoleAppl sf sz, ac2)
+  end.
+Definition subst_hole := subst_hole_acc (Some O).
+Arguments subst_hole/ x t.
+Definition subst x y t := sfill (fst (subst_hole x t)) y.
+Arguments subst/ x y t.
+
+Example subst_simple_f : forall f x, (* note that we don't require `f <> x` *)
+  subst f TmVoid (TmAppl (TmVarS f) (TmVarS x)) = TmAppl TmVoid (TmVarS x).
+Proof. intros. simpl. rewrite eqb_refl. destruct (eqb x f); reflexivity. Qed.
+
+Example subst_simple_x : forall f x, f <> x ->
+  subst x TmVoid (TmAppl (TmVarS f) (TmVarS x)) = TmAppl (TmVarS f) TmVoid.
+Proof. intros. simpl. apply eqb_neq in H. rewrite H. rewrite eqb_refl. reflexivity. Qed.
+
+Example subst_lambda_t : forall t x, x <> t ->
+  subst t TmVoid (TmForA (Some x) (TmVarS t) (TmAppl (TmVarS x) (TmVarS x))) =
+  TmForA (Some x) TmVoid (TmAppl (TmVarS x) (TmVarS x)).
+Proof. intros. simpl. apply eqb_neq in H. rewrite H. simpl. rewrite eqb_refl. reflexivity. Qed.
+
+Example subst_lambda_x : forall t x, t <> x ->
+  subst x TmVoid (TmForA (Some x) (TmVarS t) (TmAppl (TmVarS x) (TmVarS x))) =
+  TmForA (Some x) (TmVarS t) (TmAppl (TmVarS x) TmVoid). (* Note that we ignore the first `x`! *)
+Proof. intros. simpl. rewrite eqb_refl. apply eqb_neq in H. rewrite H. reflexivity. Qed.
+
+Example subst_lambda_x_l : forall t x, t <> x ->
+  subst x TmVoid (TmForA (Some x) (TmVarS t) (TmAppl (TmAppl (TmVarS x) (TmVarS x)) (TmVarS x))) =
+  TmForA (Some x) (TmVarS t) (TmAppl (TmAppl (TmVarS x) TmVoid) (TmVarS x)).
+Proof. intros. simpl. rewrite eqb_refl. apply eqb_neq in H. rewrite H. reflexivity. Qed.
+
+Example subst_lambda_x_r : forall t x, t <> x ->
+  subst x TmVoid (TmForA (Some x) (TmVarS t) (TmAppl (TmVarS x) (TmAppl (TmVarS x) (TmVarS x)))) =
+  TmForA (Some x) (TmVarS t) (TmAppl (TmVarS x) (TmAppl TmVoid (TmVarS x))).
+Proof. intros. simpl. rewrite eqb_refl. apply eqb_neq in H. rewrite H. reflexivity. Qed.
+
+Theorem subst_fv : forall x y t,
+  fv (subst x y t) =
+  match splitrm (eqb x) (fv t) with
+  | None => fv t
+  | Some (pre, post) => pre ++ fv y ++ post
+  end.
+Proof.
+  intros. rewrite splitrm_fast_slow. simpl in *. generalize dependent x. generalize dependent y.
+  induction t; intros; simpl in *; try reflexivity; repeat rewrite slow_down in *.
+  - destruct (eqb_spec x id). { subst. rewrite eqb_refl. rewrite app_nil_r. reflexivity. }
+    apply eqb_neq in n. rewrite eqb_sym in n. rewrite n. reflexivity.
+  - destruct arg as [arg |]; simpl in *.
+    + admit.
+    + destruct (subst_hole_acc (Some 0) x t2) as [scurry ac1] eqn:E. simpl in *. rewrite slow_down.
+      rewrite <- splitrm_fast_slow. rewrite splitrm_app. repeat rewrite splitrm_fast_slow.
+      clear IHt1 IHt2.
+Qed.
+
+Fixpoint count_slow {T} (f : T -> bool) li :=
+  match li with
+  | [] => O
+  | hd :: tl => let n := count_slow f tl in if f hd then S n else n
   end.
 
-Definition subst x y t :=
-  match grand_unified_subst t with
-  | None => None
-  | Some s => option_map (fun f => fill f y) (pair_lookup x s)
+Fixpoint count_fast acc {T} (f : T -> bool) li :=
+  match li with
+  | [] => acc
+  | hd :: tl => count_fast (if f hd then S acc else acc) f tl
   end.
-Arguments subst x y t/.
+Definition count := @count_fast O.
+Arguments count/ {T} f li.
 
-Example subst_simple : forall f x,
-  subst f TmVoid (TmAppl (TmVarS f) (TmVarS x)) = Some (TmAppl TmVoid (TmVarS x)).
-Proof. intros. simpl. rewrite eqb_refl. reflexivity. Qed.
+Lemma count_fast_acc : forall acc {T} f li,
+  count_fast (S acc) f li = S (@count_fast acc T f li).
+Proof.
+  intros. generalize dependent acc. generalize dependent f.
+  induction li; intros; simpl in *. { reflexivity. } destruct (f a); apply IHli.
+Qed.
 
-Example grand_unified_subst_simple :
-  grand_unified_subst (TmAppl (TmVarS "f"%string) (TmVarS "x"%string)) = Some [
-    ("f", HoleApplF HoleHere (TmVarS "x"));
-    ("x", HoleApplX (TmVarS "f") HoleHere)]%string.
-Proof. reflexivity. Qed.
+Theorem count_fast_slow : forall {T} f li,
+  count f li = @count_slow T f li.
+Proof.
+  intros. generalize dependent f. induction li; intros; simpl in *. { reflexivity. }
+  destruct (f a); [rewrite count_fast_acc; f_equal |]; apply IHli.
+Qed.
 
-Example grand_unified_subst_lambda :
-  grand_unified_subst (TmForA (Some "x") (TmVarS "T") (TmAppl (TmVarS "x") (TmVarS "x")))%string = Some [
-    ("T", HoleForATy (Some "x") HoleHere (TmAppl (TmVarS "x") (TmVarS "x")));
-    (* ignore the first `x`, since it's bound, then *)
-    ("x", HoleForABody (Some "x") (TmVarS "T") (HoleApplX (TmVarS "x") HoleHere))]%string.
-Proof. reflexivity. Qed.
-
-Lemma fst_cmp_eqb : forall {T} a a' b b',
-  @fst_cmp T T (a, b) (a', b') = eqb a a'.
-Proof. reflexivity. Qed.
+Theorem subst_fv : forall t x y n,
+  count (eqb x) (fv t) = S n ->
+  count (eqb x) (fv (subst x y t)) = n + count (eqb x) (fv y).
+Proof.
+  intros. simpl in *. repeat rewrite count_fast_slow in *. generalize dependent x. generalize dependent y.
+  generalize dependent n. induction t; intros; try discriminate H.
+  - simpl in *. destruct (eqb_spec x id); invert H. rewrite eqb_refl. reflexivity.
+  - simpl in *. destruct (subst_hole_acc (if eq_opt arg (Some x) then Some 1 else Some O) x t2) as [scurry ac1] eqn:E.
+    simpl in *. rewrite slow_down in *. destruct arg; simpl in *.
+    + admit.
+    + Print partition_pf_slow. 
+Qed.
 
 Theorem grand_unified_subst_fv : forall t s,
   grand_unified_subst t = Some s ->
