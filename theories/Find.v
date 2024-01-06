@@ -118,3 +118,8 @@ Proof.
     + destruct (X k k). { discriminate H. } apply n. reflexivity.
     + destruct (X k ka). { discriminate H. } apply (IHli _ _ X) in H. apply H in H0 as [].
 Qed.
+
+Theorem find_kv_weaken : forall {K V} k v li weaken,
+  @FindKV K V k v li ->
+  FindKV k v (li ++ weaken).
+Proof. intros. generalize dependent weaken. induction H; intros; simpl in *; constructor. { assumption. } apply IHFindKV. Qed.

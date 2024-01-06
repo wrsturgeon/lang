@@ -5,9 +5,9 @@ From Coq Require Import
   Ascii.
 From Lang Require Import
   FstCmp
+  InTactics
   Invert
   NonEmpty
-  SplitRemove
   StructuralHole
   StructuralFreeVariables
   Terms.
@@ -101,6 +101,56 @@ Fixpoint structural_subst_hole x t :=
 Definition structural_subst x y t := sfill (structural_subst_hole x t) y.
 Arguments structural_subst/ x y t.
 
+Example structural_subst_simple_f : forall f x y, x <> f ->
+  (* subst f y (f x) = y x *)
+  structural_subst f y (TmAppl (TmVarS f) (TmVarS x)) = TmAppl y (TmVarS x).
+Proof. intros. simpl. rewrite eqb_refl. apply eqb_neq in H. rewrite H. simpl. reflexivity. Qed.
+
+Example structural_subst_simple_x : forall f x y, f <> x ->
+  (* subst x y (f x) = f y *)
+  structural_subst x y (TmAppl (TmVarS f) (TmVarS x)) = TmAppl (TmVarS f) y.
+Proof. intros. simpl. apply eqb_neq in H. rewrite H. rewrite eqb_refl. simpl. reflexivity. Qed.
+
+Example structural_subst_lambda_t : forall t x y, x <> t ->
+  (* subst t y (\x:t. x x) = \x:y. x x *)
+  structural_subst t y (TmForA (Some x) (TmVarS t) (TmAppl (TmVarS x) (TmVarS x))) =
+  TmForA (Some x) y (TmAppl (TmVarS x) (TmVarS x)).
+Proof. intros. simpl. apply eqb_neq in H. rewrite H. simpl. rewrite eqb_refl. simpl. reflexivity. Qed.
+
+Example structural_subst_lambda_x : forall t x y, t <> x ->
+  (* subst x y (\x:t. x x) = \x:t. x x, UNLIKE the non-structural version (in which only the first `x` is substituted *)
+  structural_subst x y (TmForA (Some x) (TmVarS t) (TmAppl (TmVarS x) (TmVarS x))) =
+  TmForA (Some x) (TmVarS t) (TmAppl (TmVarS x) (TmVarS x)).
+Proof. intros. simpl. rewrite eqb_refl. apply eqb_neq in H. rewrite H. simpl. reflexivity. Qed.
+
+Example structural_subst_lambda_x_l : forall t x y, t <> x ->
+  (* subst x y (\x:t. ((x x) x) = \x:t. ((x x) x), again UNLIKE the non-structural version *)
+  structural_subst x y (TmForA (Some x) (TmVarS t) (TmAppl (TmAppl (TmVarS x) (TmVarS x)) (TmVarS x))) =
+  TmForA (Some x) (TmVarS t) (TmAppl (TmAppl (TmVarS x) (TmVarS x)) (TmVarS x)).
+Proof. intros. simpl. rewrite eqb_refl. apply eqb_neq in H. rewrite H. simpl. reflexivity. Qed.
+
+Example structural_subst_lambda_x_r : forall t x y, t <> x ->
+  structural_subst x y (TmForA (Some x) (TmVarS t) (TmAppl (TmVarS x) (TmAppl (TmVarS x) (TmVarS x)))) =
+  TmForA (Some x) (TmVarS t) (TmAppl (TmVarS x) (TmAppl (TmVarS x) (TmVarS x))).
+Proof. intros. simpl. rewrite eqb_refl. apply eqb_neq in H. rewrite H. simpl. reflexivity. Qed.
+
+Example structural_subst_scope : forall x y,
+  (* In which `(\x. 0) x` should not let the bound `x` escape its scope and capture the second (free) `x`. *)
+  structural_subst x y (TmAppl (TmForA (Some x) TmVoid TmVoid) (TmVarS x)) = (TmAppl (TmForA (Some x) TmVoid TmVoid) y).
+Proof. intros. simpl. rewrite eqb_refl. simpl. reflexivity. Qed.
+
+Example structural_subst_arg_cant_be_its_own_type : forall x y,
+  structural_subst x y (TmForA (Some x) (TmVarS x) TmVoid) = (TmForA (Some x) y TmVoid).
+Proof. intros. simpl. rewrite eqb_refl. simpl. reflexivity. Qed.
+
+Example structural_subst_many_times_in_types : forall x y,
+  structural_subst x y (TmForA None (TmVarS x) (TmForA None (TmVarS x) TmVoid)) = (TmForA None y (TmForA None y TmVoid)).
+Proof. intros. simpl. rewrite eqb_refl. simpl. reflexivity. Qed.
+
+Example structural_subst_type_shadowing : forall x y,
+  structural_subst x y (TmForA (Some x) (TmVarS x) (TmForA None (TmVarS x) TmVoid)) = (TmForA (Some x) y (TmForA None (TmVarS x) TmVoid)).
+Proof. intros. simpl. rewrite eqb_refl. simpl. reflexivity. Qed.
+
 Example structural_subst_simple : forall f repl x, x <> f ->
   structural_subst f repl (TmAppl (TmVarS f) (TmVarS x)) = (TmAppl repl (TmVarS x)).
 Proof. intros. simpl. rewrite eqb_refl. apply eqb_neq in H. rewrite H. reflexivity. Qed.
@@ -185,42 +235,44 @@ Proof.
   (apply in_remove_all_neq in C; [| intro E; subst; apply n; reflexivity]); apply IHt2 in C as [].
 Qed.
 
-Inductive StructuralSubst (x : string) : term -> structural_hole -> Prop :=
+Inductive StructuralSubstHole (x : string) : term -> structural_hole -> Prop :=
   | SSubstVoid :
-      StructuralSubst x TmVoid (SHoleTerm TmVoid)
+      StructuralSubstHole x TmVoid (SHoleTerm TmVoid)
   | SSubstStar : forall univ,
-      StructuralSubst x (TmStar univ) (SHoleTerm (TmStar univ))
+      StructuralSubstHole x (TmStar univ) (SHoleTerm (TmStar univ))
   | SSubstVarSEq :
-      StructuralSubst x (TmVarS x) SHoleHere
+      StructuralSubstHole x (TmVarS x) SHoleHere
   | SSubstVarSNEq : forall y,
       x <> y ->
-      StructuralSubst x (TmVarS y) (SHoleTerm (TmVarS y))
+      StructuralSubstHole x (TmVarS y) (SHoleTerm (TmVarS y))
   | SSubstAtom : forall id,
-      StructuralSubst x (TmAtom id) (SHoleTerm (TmAtom id))
+      StructuralSubstHole x (TmAtom id) (SHoleTerm (TmAtom id))
   | SSubstPackShadow : forall id ty curry ty',
-      StructuralSubst x ty ty' ->
-      StructuralSubst x (TmPack id (Some x) ty curry) (SHolePack id (Some x) ty' (SHoleTerm curry))
+      StructuralSubstHole x ty ty' ->
+      StructuralSubstHole x (TmPack id (Some x) ty curry) (SHolePack id (Some x) ty' (SHoleTerm curry))
   | SSubstPack : forall id arg ty curry ty' curry',
       arg <> Some x ->
-      StructuralSubst x ty ty' ->
-      StructuralSubst x curry curry' ->
-      StructuralSubst x (TmPack id arg ty curry) (SHolePack id arg ty' curry')
+      StructuralSubstHole x ty ty' ->
+      StructuralSubstHole x curry curry' ->
+      StructuralSubstHole x (TmPack id arg ty curry) (SHolePack id arg ty' curry')
   | SSubstForAShadow : forall ty body ty',
-      StructuralSubst x ty ty' ->
-      StructuralSubst x (TmForA (Some x) ty body) (SHoleForA (Some x) ty' (SHoleTerm body))
+      StructuralSubstHole x ty ty' ->
+      StructuralSubstHole x (TmForA (Some x) ty body) (SHoleForA (Some x) ty' (SHoleTerm body))
   | SSubstForA : forall arg ty body ty' body',
       arg <> Some x ->
-      StructuralSubst x ty ty' ->
-      StructuralSubst x body body' ->
-      StructuralSubst x (TmForA arg ty body) (SHoleForA arg ty' body')
+      StructuralSubstHole x ty ty' ->
+      StructuralSubstHole x body body' ->
+      StructuralSubstHole x (TmForA arg ty body) (SHoleForA arg ty' body')
   | SSubstAppl : forall f z f' z',
-      StructuralSubst x f f' ->
-      StructuralSubst x z z' ->
-      StructuralSubst x (TmAppl f z) (SHoleAppl f' z')
+      StructuralSubstHole x f f' ->
+      StructuralSubstHole x z z' ->
+      StructuralSubstHole x (TmAppl f z) (SHoleAppl f' z')
   .
+Definition StructuralSubst (x : string) (y t t' : term) := exists h, StructuralSubstHole x t h /\ StructuralFill h y t'.
+Arguments StructuralSubst/ x y t t'.
 
-Theorem reflect_structural_subst : forall x t h,
-  structural_subst_hole x t = h <-> StructuralSubst x t h.
+Theorem reflect_structural_subst_hole : forall x t h,
+  structural_subst_hole x t = h <-> StructuralSubstHole x t h.
 Proof.
   split; intros.
   - generalize dependent x. generalize dependent h. induction t; intros; subst; simpl in *; try solve [constructor].
@@ -230,11 +282,50 @@ Proof.
     + destruct (eq_opt_spec arg (Some x)). { subst. constructor. apply IHt1. reflexivity. }
       constructor; [assumption | apply IHt1 | apply IHt2]; reflexivity.
     + constructor; [apply IHt1 | apply IHt2]; reflexivity.
-  - induction H; simpl in *; try rewrite eqb_refl; try rewrite IHStructuralSubst;
-    try rewrite IHStructuralSubst1; try rewrite IHStructuralSubst2; try reflexivity.
+  - induction H; simpl in *; try rewrite eqb_refl; try rewrite IHStructuralSubstHole;
+    try rewrite IHStructuralSubstHole1; try rewrite IHStructuralSubstHole2; try reflexivity.
     + apply eqb_neq in H. rewrite eqb_sym in H. rewrite H. reflexivity.
     + destruct (eq_opt_spec arg (Some x)). { subst. contradiction H. reflexivity. } reflexivity.
     + destruct (eq_opt_spec arg (Some x)). { subst. contradiction H. reflexivity. } reflexivity.
+Qed.
+
+Theorem reflect_structural_subst : forall x y t t',
+  structural_subst x y t = t' <-> StructuralSubst x y t t'.
+Proof.
+  simpl in *. split; intros.
+  - generalize dependent x. generalize dependent y. generalize dependent t'.
+    induction t; intros; subst; simpl in *; try solve [repeat econstructor];
+    [destruct (eqb_spec id x); [subst |]; simpl; repeat econstructor; intro C; subst; apply n; reflexivity | | |];
+    specialize (IHt1 _ y x eq_refl) as [h1 [IHh1 IHf1]];
+    specialize (IHt2 _ y x eq_refl) as [h2 [IHh2 IHf2]];
+    [| | eexists; split; constructor; eassumption];
+    (destruct (eq_opt_spec arg (Some x)); [subst; simpl |]);
+    eexists; split; constructor; try eassumption; constructor.
+  - destruct H as [h [Hh Hf]]. generalize dependent y. generalize dependent t'.
+    induction Hh; intros; invert Hf; simpl in *; try rewrite eqb_refl; simpl in *; try reflexivity;
+    try (destruct (eq_opt_spec arg (Some x)); [subst; contradiction H; reflexivity |]);
+    try (f_equal; [apply IHHh1 | apply IHHh2]; assumption).
+    + apply eqb_neq in H. rewrite eqb_sym in H. rewrite H. reflexivity.
+    + invert H6. f_equal. apply IHHh. assumption.
+    + invert H5. f_equal. apply IHHh. assumption.
+Qed.
+
+Theorem structural_subst_not_in : forall x y t f,
+  StructurallyFreeIn t f ->
+  ~In x f ->
+  StructuralSubst x y t t.
+Proof.
+  intros. generalize dependent x. generalize dependent y. generalize dependent f.
+  induction t; intros; simpl in *; invert H; try solve [eexists; split; constructor]; [| invert H6 | |];
+  try (rewrite in_app_iff in H0; apply Decidable.not_or in H0 as [Hva Hvb]);
+  try (specialize (IHt1 _ H3 y _ Hva) as [h1 [H1h H1f]]; specialize (IHt2 _ H4));
+  [| | specialize (IHt1 _ H4 y _ Hva) as [h1 [H1h H1f]]; specialize (IHt2 _ H5) |]; try (
+    destruct arg as [arg |]; [apply wherever_remove_all in H7 |]; subst;
+    [destruct (eqb_spec x arg); [subst | rewrite in_remove_all_neq in Hvb; [| assumption]] |];
+    try specialize (IHt2 y _ Hvb) as [h2 [H2h H2f]]; eexists; split; constructor; try eassumption;
+    [constructor | |]; intro C; invert C; apply n; reflexivity).
+  - eexists. split. { constructor. intro C. subst. apply H0. left. reflexivity. } constructor.
+  - specialize (IHt2 y _ Hvb) as [h2 [H2h H2f]]. eexists. split; constructor; eassumption.
 Qed.
 
 (* doesn't make sense with non-structural holes, so it's okay to drop the `structural_` *)
@@ -288,53 +379,6 @@ Proof.
     try (intros; specialize (H x y); invert H; reflexivity). specialize (H TmVoid (TmStar O)). discriminate H.
 Qed.
 
-Definition structurally_closed t := match structural_fv t with [] => true | _ :: _ => false end.
-Arguments structurally_closed/ t.
-
-Definition StructurallyClosed t := StructurallyFreeIn t [].
-Arguments StructurallyClosed/ t.
-
-Theorem reflect_structurally_closed : forall t,
-  Bool.reflect (StructurallyClosed t) (structurally_closed t).
-Proof.
-  intros. unfold structurally_closed. unfold StructurallyClosed. remember (structural_fv t) as f eqn:Ef.
-  destruct f; constructor. { apply reflect_structural_fv. symmetry. assumption. }
-  intro C. apply reflect_structural_fv in C. rewrite <- Ef in C. discriminate C.
-Qed.
-
-Lemma ne_intersp_cons : forall {T} li a intersp,
-  let f := fun hd => @app T (hd ++ intersp) in
-  ne_intersp f (ne_map_hd (cons a) li) = a :: (ne_intersp f li).
-Proof. induction li; intros; simpl in *. { reflexivity. } unfold f. simpl. reflexivity. Qed.
-
-Lemma ne_intersp_splitrm : forall {T} (a b : list T) p intersp,
-  let f := fun hd => app (hd ++ intersp) in
-  ne_intersp f (splitrm_slow p a) ++ ne_intersp f (splitrm_slow p b) = ne_intersp f (splitrm_slow p (a ++ b)).
-Proof.
-  induction a; intros; simpl in *. { reflexivity. }
-  destruct (p a) eqn:E; simpl in *. { unfold f. simpl in *. rewrite <- app_assoc. rewrite IHa. reflexivity. }
-  unfold f. repeat rewrite ne_intersp_cons. simpl. f_equal. apply IHa.
-Qed.
-
-Lemma splitrm_remove_all : forall li x,
-  splitrm_slow (eqb x) (remove_all x li) = NESton (remove_all x li).
-Proof.
-  induction li; intros; simpl in *. { reflexivity. } destruct (eqb x a) eqn:E. { apply IHli. }
-  simpl. rewrite E. rewrite IHli. reflexivity.
-Qed.
-
-Lemma splitrm_remove_all_neq : forall li x y,
-  x <> y ->
-  splitrm_slow (eqb x) (remove_all y li) = ne_map (remove_all y) (splitrm_slow (eqb x) li).
-Proof.
-  induction li; intros; simpl in *. { reflexivity. } destruct (eqb_spec x a); destruct (eqb_spec y a); subst; simpl in *.
-  - contradiction H. reflexivity.
-  - rewrite eqb_refl. f_equal. apply IHli. assumption.
-  - rewrite IHli; [| assumption]. induction (splitrm_slow (eqb x) li); simpl; rewrite eqb_refl; reflexivity.
-  - apply eqb_neq in n. rewrite n. rewrite IHli; [| assumption]. apply eqb_neq in n0.
-    induction (splitrm_slow (eqb x) li); simpl; rewrite n0; reflexivity.
-Qed.
-
 (* This doesn't work, since substituting a non-closed term might capture a lambda argument. *)
 (*
 Theorem structural_subst_fv : forall x y t,
@@ -355,7 +399,7 @@ Proof.
     Unshelve. rewrite splitrm_remove_all_neq; [| intro C; subst; apply n; reflexivity]. rewrite IHt2. Abort.
 *)
 
-Theorem structural_subst_fv : forall x y t,
+Theorem structural_subst_closed : forall x y t,
   StructurallyClosed y ->
   structural_fv (structural_subst x y t) = remove_all x (structural_fv t).
 Proof.
@@ -371,4 +415,36 @@ Proof.
     destruct arg as [arg |]; simpl in *; rewrite remove_all_app; f_equal; [| apply IHt2].
     destruct (eqb_spec arg x). { subst. symmetry. apply remove_all_shadow. } rewrite remove_all_swap. f_equal. apply IHt2.
   - specialize (IHt1 _ H). specialize (IHt2 _ H). rewrite remove_all_app. rewrite IHt1. f_equal. apply IHt2.
+Qed.
+
+Theorem structural_subst_fv : forall x y t t' ft' fy,
+  StructuralSubst x y t t' ->
+  StructurallyFreeIn t' ft' ->
+  StructurallyFreeIn y fy ->
+  ~In x fy ->
+  ~In x ft'.
+Proof.
+  intros x y t t' ft' fy [h [Hh Hf]] Hft' Hfy Hiy Hit'.
+  generalize dependent y. generalize dependent t'. generalize dependent ft'. generalize dependent fy.
+  induction Hh; intros; simpl in *.
+  - invert Hf. invert Hft'. destruct Hit'.
+  - invert Hf. invert Hft'. destruct Hit'.
+  - invert Hf. apply reflect_structural_fv in Hft'. apply reflect_structural_fv in Hfy.
+    rewrite Hft' in Hfy. subst. apply Hiy in Hit' as [].
+  - invert Hf. invert Hft'. destruct Hit' as [| []]. subst. apply H. reflexivity.
+  - invert Hf. invert Hft'. destruct Hit'.
+  - invert Hf. invert H6. invert Hft'. invert H4. eapply IHHh; [eassumption | | | eassumption | assumption]; [| eassumption].
+    apply in_app_iff in Hit'. destruct (existsb_in _ x va eqb_spec). { assumption. } destruct Hit'. { apply n in H as []. }
+    apply wherever_remove_all in H7. subst. apply in_remove_all in H as [].
+  - invert Hf. invert Hft'. invert H5. specialize (IHHh1 _ Hiy). specialize (IHHh2 _ Hiy).
+    apply in_app_iff in Hit' as [Hi | Hi]. { eapply IHHh1; eassumption. }
+    destruct arg. 2: { subst. eapply IHHh2; eassumption. } apply wherever_remove_all in H9. subst.
+    apply in_remove_all_neq in Hi; [| intro C; subst; apply H; reflexivity]. eapply IHHh2; eassumption.
+  - invert Hf. invert Hft'. invert H5. apply wherever_remove_all in H7. subst.
+    apply in_app_iff in Hit' as [Hi | Hi]; [| apply in_remove_all in Hi as []]. eapply IHHh; eassumption.
+  - invert Hf. invert Hft'. specialize (IHHh1 _ Hiy). specialize (IHHh2 _ Hiy).
+    apply in_app_iff in Hit' as [Hi | Hi]. { eapply IHHh1; eassumption. }
+    destruct arg. 2: { subst. eapply IHHh2; eassumption. } apply wherever_remove_all in H8. subst.
+    apply in_remove_all_neq in Hi; [| intro C; subst; apply H; reflexivity]. eapply IHHh2; eassumption.
+  - invert Hf. invert Hft'. apply in_app_iff in Hit' as [Hi | Hi]; [eapply IHHh1 | eapply IHHh2]; eassumption.
 Qed.

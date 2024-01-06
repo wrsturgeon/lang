@@ -162,3 +162,13 @@ Proof.
   - induction H; subst; simpl in *; try reflexivity. eapply (reflect_partition_pf _ _ _ _ eqb_spec) in H1.
     apply reflect_structural_fv in H. destruct arg; [apply maybe_cons_remove_if_head in H3 |]; subst; reflexivity.
 Qed.
+
+Definition closed t := match fv t with [] => true | _ :: _ => false end.
+Arguments closed/ t.
+
+Theorem reflect_closed : forall t,
+  Bool.reflect (Closed t) (closed t).
+Proof.
+  intros. simpl. destruct (fv t) eqn:E; constructor. { apply reflect_fv. assumption. }
+  intro C. apply reflect_fv in C. rewrite E in C. discriminate C.
+Qed.

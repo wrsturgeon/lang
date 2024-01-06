@@ -24,38 +24,47 @@ Inductive MaybeConsKV {K V} k v : list (K * V) -> list (K * V) -> Prop :=
       MaybeConsKV k v ((hdk, hdv) :: tl) ((hdk, hdv) :: tl)
   .
 
+(*
+Variant MaybeSubst : option string -> term -> term -> term -> Prop :=
+  | MaybeSubstNone : forall y t,
+      MaybeSubst None y t t
+  | MaybeSubstSome : forall x y t t',
+      Subst x y t t' ->
+      MaybeSubst (Some x) y t t'
+  .
+
 (* Typed extremely strictly, as if on a stack: no exchange, no weakening, no contraction. *)
-Inductive TypedWith (filter : string -> term -> context -> context -> Prop) : judgment :=
+Inductive Typed : list (string * term) -> term -> term -> Prop :=
   | TyStar : forall univ,
-      TypedWith filter [] (TmStar univ) (TmStar (S univ))
+      Typed [] (TmStar univ) (TmStar (S univ))
   | TyVarS : forall id t,
-      TypedWith filter [(id, t)] (TmVarS id) t
+      Typed [(id, t)] (TmVarS id) t
   | TyAtom : forall id,
-      TypedWith filter [] (TmAtom id) (TmAtom id)
+      Typed [] (TmAtom id) (TmAtom id)
   | TyPack : forall ctx id arg arg_ty curry ty,
       AtomId id curry ->
-      TypedWith filter ctx (TmForA    arg arg_ty curry) ty ->
-      TypedWith filter ctx (TmPack id arg arg_ty curry) ty
+      Typed ctx (TmForA    arg arg_ty curry) ty ->
+      Typed ctx (TmPack id arg arg_ty curry) ty
   | TyForA : forall pf ctx ctxt ctxc ctxa arg ty body t kind,
-      TypedWith WhereverKV ctxt ty kind ->
-      TypedWith filter ctxa body t ->
-      match arg with None => eq | Some a => filter a ty end ctxc ctxa ->
+      StructurallyTyped ctxt ty kind ->
+      Typed ctxa body t ->
+      ctxa = match arg with None => ctxc | Some a => (a, ty) :: ctxc end ->
       PartitionKV pf ctxt ctxc ->
       ctx = pf ++ ctxc ->
-      TypedWith filter ctx (TmForA arg ty body) (TmForA arg ty t)
+      Typed ctx (TmForA arg ty body) (TmForA arg ty t)
   | TyAppl : forall ctx ctxf ctxx f x arg ty body substituted,
-      TypedWith filter ctxf f (TmForA arg ty body) ->
-      TypedWith filter ctxx x ty ->
+      Typed ctxf f (TmForA arg ty body) ->
+      Typed ctxx x ty ->
       ctxf ++ ctxx = ctx ->
       MaybeSubst arg x body substituted ->
-      TypedWith filter ctx (TmAppl f x) substituted
+      Typed ctx (TmAppl f x) substituted
   (*
   | TyStar : forall ctx t ty,
       Typed ctx t ty ->
       Typed ctx t TmStar
   *)
   .
-Arguments TypedWith filter ctx t ty.
+Arguments Typed ctx t ty.
 Arguments TyStar {filter} univ.
 Arguments TyVarS {filter} id t.
 Arguments TyAtom {filter} id.
@@ -659,4 +668,5 @@ Proof.
 
   - destruct (eqb x id) eqn:E; invert H0. apply eqb_eq in E. subst. induction H.
 Qed.
+*)
 *)

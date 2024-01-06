@@ -4,7 +4,9 @@ Export ListNotations.
 From Coq Require
   Program.Wf.
 From Lang Require Import
+  FreeVariables
   Invert
+  StructuralFreeVariables
   Terms.
 
 Inductive Value : term -> Prop :=
@@ -73,4 +75,25 @@ Proof.
       invert IHt1. simpl. rewrite Bool.andb_false_r. constructor. intro C. invert C. apply H in H2 as []. }
     destruct IHt2. 2: { constructor. intro C. invert C. apply n in H5 as []. }
     invert IHt1; constructor. { constructor; assumption. } intro C. invert C. apply H0 in H3 as [].
+Qed.
+
+Theorem values_structurally_closed : forall v,
+  Value v ->
+  StructurallyClosed v.
+Proof.
+  intros v Hv. induction Hv; simpl in *; try solve [repeat constructor].
+  - constructor. assumption.
+  - unfold fora. clear fora. econstructor; [eassumption | eassumption | destruct arg; constructor | reflexivity].
+  - unfold appl. clear appl. econstructor; [eassumption | eassumption | reflexivity].
+Qed.
+
+Theorem values_closed : forall v,
+  Value v ->
+  Closed v.
+Proof.
+  intros v Hv. induction Hv; simpl in *; try solve [repeat constructor].
+  - constructor. assumption.
+  - unfold fora. clear fora. econstructor; [apply values_structurally_closed; assumption |
+      eassumption | constructor | reflexivity | destruct arg; constructor].
+  - unfold appl. clear appl. unfold pack in *. clear pack. econstructor; [eassumption | eassumption | reflexivity].
 Qed.

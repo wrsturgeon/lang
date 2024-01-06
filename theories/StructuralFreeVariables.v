@@ -64,6 +64,23 @@ Proof.
   destruct (eqb x a) eqn:E. { apply IHli. } simpl. rewrite E. f_equal. apply IHli.
 Qed.
 
+Lemma existsb_remove_all : forall x li,
+  existsb (eqb x) (remove_all x li) = false.
+Proof.
+  intros. generalize dependent x. induction li; intros; simpl in *. { reflexivity. }
+  destruct (eqb_spec x a). { apply IHli. } simpl. apply eqb_neq in n. rewrite n. apply IHli.
+Qed.
+
+Lemma existsb_remove_all_neq : forall x y li,
+  x <> y ->
+  existsb (eqb x) (remove_all y li) = existsb (eqb x) li.
+Proof.
+  intros. generalize dependent x. generalize dependent y. induction li; intros; simpl in *. { reflexivity. }
+  destruct (eqb_spec x a). {
+    subst. simpl. apply eqb_neq in H. rewrite eqb_sym in H. rewrite H. simpl. rewrite eqb_refl. reflexivity. }
+  destruct (eqb_spec y a). { apply IHli. assumption. } simpl. apply eqb_neq in n. rewrite n. apply IHli. assumption.
+Qed.
+
 Fixpoint structural_fv_slow t :=
   match t with
   | TmVoid
@@ -281,8 +298,8 @@ Inductive StructurallyFreeIn : term -> list string -> Prop :=
   .
 Arguments StructurallyFreeIn t vs.
 
-Definition ClosedStructural := fun t => StructurallyFreeIn t [].
-Arguments ClosedStructural t/.
+Definition StructurallyClosed := fun t => StructurallyFreeIn t [].
+Arguments StructurallyClosed t/.
 
 Lemma map_distr : forall {A B} (f : A -> B) hd tl, map f (hd ++ tl) = map f hd ++ map f tl.
 Proof.
@@ -299,4 +316,15 @@ Proof.
     (destruct arg; [| reflexivity]); apply wherever_remove_all; reflexivity.
   - induction H; subst; simpl in *; try reflexivity. destruct arg; [| subst; reflexivity].
     apply wherever_remove_all in H1. subst. reflexivity.
+Qed.
+
+Definition structurally_closed t := match structural_fv t with [] => true | _ :: _ => false end.
+Arguments structurally_closed/ t.
+
+Theorem reflect_structurally_closed : forall t,
+  Bool.reflect (StructurallyClosed t) (structurally_closed t).
+Proof.
+  intros. unfold structurally_closed. destruct (structural_fv t) eqn:E; constructor.
+  - apply reflect_structural_fv. assumption.
+  - intro C. apply reflect_structural_fv in C. rewrite E in C. discriminate C.
 Qed.

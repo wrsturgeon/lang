@@ -21,9 +21,9 @@ Inductive Step : list (string * term) -> term -> list (string * term) -> term ->
       Value v ->
       PartitionKV pf ctxt ctxc ->
       ctx = pf ++ ctxc ->
-      match arg with
-      | None => curry = out
-      | Some x => subst x v curry = Some out
+      out = match arg with
+      | None => curry
+      | Some x => subst x v curry
       end ->
       Step ctx (TmAppl (TmForA arg ty curry) v) ctxc out
   | StepApplF : forall ctxf f ctxf' f' ctxx ctx ctx' x,
@@ -54,7 +54,7 @@ Theorem values_cant_step : forall v,
   ~Step ctx v ctx' v'.
 Proof.
   intros v Hv. induction Hv; intros; simpl in *; intro C; try solve [invert C].
-  - invert C. eapply IHHv. apply H7.
-  - invert C; [eapply IHHv1 | eapply IHHv2]; apply H5.
-  - invert C; [eapply IHHv1 | eapply IHHv2]; apply H1.
+  - invert C. eapply IHHv. eassumption.
+  - invert C; [eapply IHHv1 | eapply IHHv2]; eassumption.
+  - invert C; [eapply IHHv1 | eapply IHHv2]; eassumption.
 Qed.
