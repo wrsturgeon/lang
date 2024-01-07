@@ -119,7 +119,34 @@ Proof.
     + destruct (X k ka). { discriminate H. } apply (IHli _ _ X) in H. apply H in H0 as [].
 Qed.
 
-Theorem find_kv_weaken : forall {K V} k v li weaken,
+Lemma find_kv_weaken : forall {K V} k v li weaken,
   @FindKV K V k v li ->
   FindKV k v (li ++ weaken).
 Proof. intros. generalize dependent weaken. induction H; intros; simpl in *; constructor. { assumption. } apply IHFindKV. Qed.
+
+Lemma find_kv_app : forall {K V} k v hd tl fk,
+  (forall a b : K, Bool.reflect (a = b) (fk a b)) ->
+  @FindKV K V k v (hd ++ tl) <->
+  (FindKV k v hd \/ (FindKV k v tl /\ forall v', ~FindKV k v' hd)).
+Proof.
+  split; intros.
+  - generalize dependent k. generalize dependent v. generalize dependent tl.
+    induction hd; intros; simpl in *. { right. split. { assumption. } intros v' C. invert C. } invert H. { left. constructor. }
+    specialize (IHhd _ _ _ H3) as [IH | [IH1 IH2]]. { left. constructor; assumption. } right. split. { assumption. }
+    intros v' C. invert C. { apply H2. reflexivity. } apply IH2 in H5 as [].
+  - destruct H as [H | [H1 H2]]. { apply find_kv_weaken. assumption. } induction hd. { assumption. }
+    destruct a. destruct (X k k0). { subst. contradiction (H2 v0). constructor. } constructor. { assumption. }
+    apply IHhd. intros v' C. specialize (H2 v'). apply H2. constructor; assumption.
+Qed.
+
+Lemma find_kv_exchange : forall {K V} pre k1 v1 k2 v2 post k v,
+  k1 <> k2 ->
+  @FindKV K V k v (pre ++ (k1, v1) :: (k2, v2) :: post) ->
+  FindKV k v (pre ++ (k2, v2) :: (k1, v1) :: post).
+Proof.
+  intros. remember (pre ++ (k1, v1) :: (k2, v2) :: post) as li eqn:El. generalize dependent pre. generalize dependent k1.
+  generalize dependent v1. generalize dependent k2. generalize dependent v2. generalize dependent post.
+  induction H0; intros; subst; simpl in *. { destruct pre; invert El; constructor. { assumption. } constructor. }
+  destruct pre; invert El. { invert H0; constructor. { assumption. } constructor; assumption. }
+  constructor. { assumption. } apply IHFindKV. { assumption. } reflexivity.
+Qed.

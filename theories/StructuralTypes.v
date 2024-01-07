@@ -151,7 +151,7 @@ Theorem fv_not_typed : forall ctx t f,
   ~exists ty, StructurallyTyped ctx t ty.
 Proof. intros ctx t f Hf Hi [ty C]. eapply structurally_typed_fv in C; [| eassumption]. apply Hi in C as []. Qed.
 
-Theorem structural_subst_atom_id : forall x y t t' id,
+Lemma structural_subst_atom_id : forall x y t t' id,
   StructuralSubst x y t t' ->
   AtomId id t ->
   AtomId id t'.
@@ -161,19 +161,7 @@ Proof.
   invert Hs; invert Hf. { invert H7. constructor. assumption. } constructor. eapply IHHa; eassumption.
 Qed.
 
-(*
-Theorem structual_type_weakening : forall x xt ctx t ty,
-  (FindKV x xt ctx \/ ~In x (map fst ctx)) ->
-  StructurallyTyped ctx t ty ->
-  StructurallyTyped ((x, xt) :: ctx) t ty.
-Proof.
-  intros x xt ctx t ty Hf Ht. generalize dependent x. generalize dependent xt.
-  induction Ht; intros; simpl in *; try solve [constructor].
-  - constructor. destruct Hf; [admit | apply find_kv_in_fst in H]. { destruct (eqb_spec (id, t) (x, xt)).
-Qed.
-*)
-
-Theorem structural_type_weakening : forall ctx weaken t ty,
+Lemma structural_type_weakening : forall ctx weaken t ty,
   StructurallyTyped ctx t ty ->
   StructurallyTyped (ctx ++ weaken) t ty.
 Proof.
@@ -184,6 +172,95 @@ Proof.
   - econstructor. { apply IHStructurallyTyped1. } destruct arg; apply IHStructurallyTyped2.
   - econstructor; try eassumption. { apply IHStructurallyTyped1. } apply IHStructurallyTyped2.
 Qed.
+
+Lemma structural_type_shadow : forall ctxa x alt ctxb xt t ty,
+  FindKV x xt ctxa ->
+  (StructurallyTyped (ctxa ++ ctxb) t ty <-> StructurallyTyped (ctxa ++ (x, alt) :: ctxb) t ty).
+Proof.
+  intros ctxa x alt ctxb xt t ty Hf. split; intros Ht.
+  - remember (ctxa ++ ctxb) as ctx eqn:Ec. generalize dependent alt.
+    generalize dependent x. generalize dependent xt. generalize dependent ctxa. generalize dependent ctxb.
+    induction Ht; intros; subst; simpl in *; try solve [constructor].
+    + constructor. eapply find_kv_app in H; [| apply eqb_spec].
+      destruct H as [H | [Hb Ha]]; (eapply find_kv_app; [apply eqb_spec |]). { left. assumption. }
+      right. split; [| assumption]. constructor. { intro C. subst. apply Ha in Hf as []. } assumption.
+    + constructor. { assumption. } eapply IHHt. { reflexivity. } eassumption.
+    + econstructor. { eapply IHHt1. { reflexivity. } eassumption. }
+      destruct arg as [arg |]. 2: { eapply IHHt2. { reflexivity. } eassumption. }
+      destruct (eqb_spec x arg); subst; eapply (IHHt2 _ ((arg, ty) :: ctxa)); try reflexivity; constructor; eassumption.
+    + econstructor; [eapply IHHt1 | eapply IHHt2 |]; try reflexivity; eassumption.
+  - remember (ctxa ++ (x, alt) :: ctxb) as ctx eqn:Ec. generalize dependent alt.
+    generalize dependent x. generalize dependent xt. generalize dependent ctxa. generalize dependent ctxb.
+    induction Ht; intros; subst; simpl in *; try solve [constructor].
+    + constructor. eapply find_kv_app in H; [| apply eqb_spec].
+      destruct H as [H | [Hb Ha]]; (eapply find_kv_app; [apply eqb_spec |]). { left. assumption. }
+      invert Hb. { apply Ha in Hf as []. } right. split. { assumption. } intros v' C. apply Ha in C as [].
+    + constructor. { assumption. } eapply IHHt. { eassumption. } reflexivity.
+    + econstructor. { eapply IHHt1. { eassumption. } reflexivity. }
+      destruct arg as [arg |]. 2: { eapply IHHt2. { eassumption. } reflexivity. }
+      destruct (eqb_spec x arg); subst; eapply (IHHt2 _ ((arg, ty) :: ctxa)); try reflexivity; constructor; eassumption.
+    + econstructor; [eapply IHHt1 | eapply IHHt2 |]; try reflexivity; eassumption.
+Qed.
+
+Lemma structural_type_exchange : forall pre x xt y yt ctx t ty,
+  x <> y ->
+  StructurallyTyped (pre ++ (x, xt) :: (y, yt) :: ctx) t ty ->
+  StructurallyTyped (pre ++ (y, yt) :: (x, xt) :: ctx) t ty.
+Proof.
+  intros pre x xt y yt ctx t ty Hn Ht. remember (pre ++ (x, xt) :: (y, yt) :: ctx) as c eqn:Ec.
+  generalize dependent pre. generalize dependent x. generalize dependent xt.
+  generalize dependent y. generalize dependent yt. generalize dependent ctx.
+  induction Ht; intros; subst; simpl in *; try solve [constructor].
+  - constructor. apply find_kv_exchange; assumption.
+  - constructor. { assumption. } apply IHHt. { assumption. } reflexivity.
+  - econstructor. { apply IHHt1. { assumption. } reflexivity. } destruct arg. 2: { apply IHHt2. { assumption. } reflexivity. }
+    rewrite app_comm_cons. apply IHHt2. { assumption. } reflexivity.
+  - econstructor; [apply IHHt1 | apply IHHt2 |]; try eassumption; reflexivity.
+Qed.
+
+Theorem structural_subst_typed : forall pre x y t t' xt ctx ty,
+  Static t ->
+  (~In x (map fst pre)) ->
+  StructuralSubst x y t t' ->
+  StructurallyTyped [] y xt ->
+  StructurallyTyped (pre ++ (x, xt) :: ctx) t ty ->
+  StructurallyTyped (pre ++ ctx) t' ty.
+Proof.
+  intros pre x y t t' xt ctx ty Hs Hi [h [Hh Hf]] Hy' Ht. remember (pre ++ (x, xt) :: ctx) as c eqn:Ec.
+  generalize dependent pre. generalize dependent x. generalize dependent y. generalize dependent t'.
+  generalize dependent xt. generalize dependent ctx. generalize dependent Hs. generalize dependent h.
+  induction Ht; intros; subst; simpl in *.
+  - invert Hh. invert Hf. constructor.
+  - invert Hh; invert Hf.
+    + destruct pre. { invert H; [| contradiction H2; reflexivity]. apply structural_type_weakening. assumption. }
+      eapply find_kv_app in H; [| apply eqb_spec]. destruct H. { apply find_kv_in_fst in H. apply Hi in H as []. }
+      destruct H. invert H; [| contradiction H3; reflexivity]. apply (structural_type_weakening []). assumption.
+    + constructor. induction pre. { invert H. { contradiction H1. reflexivity. } assumption. }
+      destruct a. simpl in *. invert H; constructor. { assumption. }
+      apply Decidable.not_or in Hi as [Hx Hi]. apply IHpre; assumption.
+  - invert Hh. invert Hf. constructor.
+  - invert Ht. invert Hs. invert Hh; invert Hf.
+    + invert H11. constructor. { assumption. }
+      eapply IHHt; [assumption | | eassumption | | eassumption | reflexivity]; constructor; try eassumption. constructor.
+    + constructor. { eapply structural_subst_atom_id; [eexists; split |]; eassumption. }
+      eapply IHHt; [assumption | | eassumption | | eassumption | reflexivity]; constructor; eassumption.
+  - invert Hs. invert Hh; invert Hf.
+    + invert H9. assert (structural_subst x y ty = ty'0). { apply reflect_structural_subst. eexists. split; eassumption. }
+      subst. assert (structural_subst x y ty = ty). { apply reflect_structural_subst.
+        eapply structural_subst_not_in. { eassumption. } intros []. }
+      repeat rewrite H in *. econstructor.
+      * eapply IHHt1; [| | | | | reflexivity]; eassumption.
+      * eapply (structural_type_shadow ((x, ty) :: pre)) in Ht2. { assumption. } constructor.
+    + assert (structural_subst x y ty = ty'0). { apply reflect_structural_subst. eexists. split; eassumption. } subst.
+      assert (structural_subst x y ty = ty). {
+        apply reflect_structural_subst. eapply structural_subst_not_in. { eassumption. } intros []. }
+      repeat rewrite H in *. econstructor; [eapply IHHt1; [| | | | | reflexivity]; eassumption |].
+      destruct arg. 2: { eapply IHHt2; [| | | | | reflexivity]; eassumption. }
+      rewrite app_comm_cons. eapply IHHt2; [| | | | | reflexivity]; try eassumption.
+      intros [C | C]. { subst. apply H5. reflexivity. } apply Hi in C as [].
+  - invert Hs. invert Hh. invert Hf. destruct arg as [arg |]; invert H;
+    (econstructor; [eapply IHHt1 | eapply IHHt2 | constructor]); try reflexivity; try eassumption. clear IHHt1 IHHt2.
+Abort.
 
 (*
 Theorem static_structurally_typed_for_a : forall ctx t arg arg_ty body f,
