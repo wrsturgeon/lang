@@ -46,10 +46,22 @@ Inductive StructurallyTyped : list (string * term) -> term -> term -> Prop :=
       AtomId id curry ->
       StructurallyTyped ctx (TmForA    arg arg_ty curry) ty ->
       StructurallyTyped ctx (TmPack id arg arg_ty curry) ty
-  | STyForA : forall ctx arg ty body t kind,
+  | STyForANone : forall ctx ty body t kind,
       StructurallyTyped ctx ty kind ->
-      StructurallyTyped (match arg with None => ctx | Some a => (a, ty) :: ctx end) body t ->
-      StructurallyTyped ctx (TmForA arg ty body) (TmForA arg ty t) (* TODO: Maybe `None` if `arg` is not free (used)? *)
+      StructurallyTyped ctx body t ->
+      StructurallyTyped ctx (TmForA None ty body) (TmForA None ty t)
+  | STyForASomeNone : forall ctx arg ty body t kind f,
+      StructurallyFreeIn t f ->
+      ~In arg f ->
+      StructurallyTyped ctx ty kind ->
+      StructurallyTyped ((arg, ty) :: ctx) body t ->
+      StructurallyTyped ctx (TmForA (Some arg) ty body) (TmForA None ty t)
+  | STyForASomeSome : forall ctx arg ty body t kind f,
+      StructurallyFreeIn t f ->
+      In arg f ->
+      StructurallyTyped ctx ty kind ->
+      StructurallyTyped ((arg, ty) :: ctx) body t ->
+      StructurallyTyped ctx (TmForA (Some arg) ty body) (TmForA (Some arg) ty t)
   | STyAppl : forall ctx f x arg ty body substituted,
       StructurallyTyped ctx f (TmForA arg ty body) ->
       StructurallyTyped ctx x ty ->
@@ -70,17 +82,25 @@ Arguments StructurallyTyped ctx t ty.
  * `\t: *. \x: t. t`, almost but not quite the same. Could be simplified to
  * `\t: *. (t -> t)` by making the `x` anonymous. *)
 Definition polymorphic_identity_fn := (TmForA (Some "t") (TmStar 0) (TmForA (Some "x") (TmVarS "t") (TmVarS "x")))%string.
-Definition polymorphic_identity_ty := (TmForA (Some "t") (TmStar 0) (TmForA (Some "x") (TmVarS "t") (TmVarS "t")))%string.
+Definition polymorphic_identity_ty := (TmForA (Some "t") (TmStar 0) (TmForA None (TmVarS "t") (TmVarS "t")))%string.
 Arguments polymorphic_identity_fn/.
 Arguments polymorphic_identity_ty/.
 Theorem dependent_types_woohoo :
   StructurallyTyped [] polymorphic_identity_fn polymorphic_identity_ty.
 Proof.
-  simpl. eapply STyForA.
+  simpl. eapply STyForASomeSome.
+  - (* computing free variables *)
+    repeat econstructor.
+  - (* demonstrating that the type needs to be dependent *)
+    simpl. left. reflexivity.
   - (* typing `TmStar` *)
     apply STyStar.
   - (* typing the body *)
-    eapply STyForA.
+    eapply STyForASomeNone.
+    + (* computing free variables *)
+      repeat econstructor.
+    + (* demonstrating that the type does NOT need to be dependent *)
+      simpl. intros [C | []]. discriminate C.
     + (* typing `TmVarS "t"` *)
       apply STyVarS. find_kv.
     + (* typing `TmVarS "x" : TmVarS "t"` *)
@@ -132,17 +152,21 @@ Theorem structurally_typed_fv : forall ctx t ty f,
   incl f (map fst ctx).
 Proof.
   unfold incl. intros ctx t ty f Ht Hf x Hi. generalize dependent f. generalize dependent x.
-  induction Ht; intros; simpl in *.
-  - invert Hf. destruct Hi.
-  - invert Hf. destruct Hi as [Hi | []]. subst. eapply find_kv_in_fst. eassumption.
-  - invert Hf. destruct Hi.
-  - invert Hf. invert H5. invert Ht. eapply IHHt; [| eassumption]. econstructor; try eassumption. reflexivity.
-  - invert Hf. apply in_app_iff in Hi as [Hi | Hi]. { eapply IHHt1; eassumption. }
-    specialize (IHHt2 x _ H3). destruct arg. 2: { subst. apply IHHt2. assumption. }
-    apply wherever_remove_all in H5. subst. destruct (eqb_spec x s). { subst. apply in_remove_all in Hi as []. }
-    apply in_remove_all_neq in Hi; [| assumption]. specialize (IHHt2 Hi). destruct IHHt2; [| assumption].
-    subst. contradiction n. reflexivity.
-  - invert Hf. apply in_app_iff in Hi as [|]; [eapply IHHt1 | eapply IHHt2]; eassumption.
+  induction Ht; intros; simpl in *; invert Hf.
+  - destruct Hi.
+  - destruct Hi as [Hi | []]. subst. eapply find_kv_in_fst. eassumption.
+  - destruct Hi.
+  - invert H5. eapply IHHt; [| eassumption]. econstructor; try eassumption. reflexivity.
+  - apply in_app_iff in Hi as [Hi | Hi]; [eapply IHHt1 | eapply IHHt2]; eassumption.
+  - apply in_app_iff in Hi as [Hi | Hi]. { eapply IHHt1; eassumption. }
+    apply wherever_remove_all in H7. subst. destruct (eqb_spec x arg). { subst. apply in_remove_all in Hi as []. }
+    apply in_remove_all_neq in Hi; [| assumption]. specialize (IHHt2 _ _ H5 Hi).
+    destruct IHHt2. { subst. contradiction n. reflexivity. } assumption.
+  - apply in_app_iff in Hi as [Hi | Hi]. { eapply IHHt1; eassumption. }
+    apply wherever_remove_all in H7. subst. destruct (eqb_spec x arg). { subst. apply in_remove_all in Hi as []. }
+    apply in_remove_all_neq in Hi; [| assumption]. specialize (IHHt2 _ _ H5 Hi).
+    destruct IHHt2. { subst. contradiction n. reflexivity. } assumption.
+  - apply in_app_iff in Hi as [|]; [eapply IHHt1 | eapply IHHt2]; eassumption.
 Qed.
 
 Theorem fv_not_typed : forall ctx t f,
@@ -168,8 +192,10 @@ Proof.
   intros. generalize dependent weaken. induction H; intros; subst; simpl in *; repeat constructor.
   - apply find_kv_weaken. assumption.
   - assumption.
-  - invert H0. apply IHStructurallyTyped.
-  - econstructor. { apply IHStructurallyTyped1. } destruct arg; apply IHStructurallyTyped2.
+  - apply IHStructurallyTyped.
+  - econstructor. { apply IHStructurallyTyped1. } apply IHStructurallyTyped2.
+  - econstructor; try eassumption. { apply IHStructurallyTyped1. } apply IHStructurallyTyped2.
+  - econstructor; try eassumption. { apply IHStructurallyTyped1. } apply IHStructurallyTyped2.
   - econstructor; try eassumption. { apply IHStructurallyTyped1. } apply IHStructurallyTyped2.
 Qed.
 
@@ -186,8 +212,13 @@ Proof.
       right. split; [| assumption]. constructor. { intro C. subst. apply Ha in Hf as []. } assumption.
     + constructor. { assumption. } eapply IHHt. { reflexivity. } eassumption.
     + econstructor. { eapply IHHt1. { reflexivity. } eassumption. }
-      destruct arg as [arg |]. 2: { eapply IHHt2. { reflexivity. } eassumption. }
-      destruct (eqb_spec x arg); subst; eapply (IHHt2 _ ((arg, ty) :: ctxa)); try reflexivity; constructor; eassumption.
+      eapply IHHt2. { reflexivity. } eassumption.
+    + econstructor; try eassumption. { eapply IHHt1. { reflexivity. } eassumption. }
+      rewrite app_comm_cons. destruct (eqb_spec x arg). { subst. eapply IHHt2. { reflexivity. } constructor. }
+      eapply IHHt2. { reflexivity. } constructor; eassumption.
+    + econstructor; try eassumption. { eapply IHHt1. { reflexivity. } eassumption. }
+      rewrite app_comm_cons. destruct (eqb_spec x arg). { subst. eapply IHHt2. { reflexivity. } constructor. }
+      eapply IHHt2. { reflexivity. } constructor; eassumption.
     + econstructor; [eapply IHHt1 | eapply IHHt2 |]; try reflexivity; eassumption.
   - remember (ctxa ++ (x, alt) :: ctxb) as ctx eqn:Ec. generalize dependent alt.
     generalize dependent x. generalize dependent xt. generalize dependent ctxa. generalize dependent ctxb.
@@ -197,8 +228,11 @@ Proof.
       invert Hb. { apply Ha in Hf as []. } right. split. { assumption. } intros v' C. apply Ha in C as [].
     + constructor. { assumption. } eapply IHHt. { eassumption. } reflexivity.
     + econstructor. { eapply IHHt1. { eassumption. } reflexivity. }
-      destruct arg as [arg |]. 2: { eapply IHHt2. { eassumption. } reflexivity. }
-      destruct (eqb_spec x arg); subst; eapply (IHHt2 _ ((arg, ty) :: ctxa)); try reflexivity; constructor; eassumption.
+      eapply IHHt2. { eassumption. } reflexivity.
+    + econstructor; try eassumption. { eapply IHHt1. { eassumption. } reflexivity. }
+      rewrite app_comm_cons. destruct (eqb_spec x arg); subst; (eapply IHHt2; [| reflexivity]); constructor; eassumption.
+    + econstructor; try eassumption. { eapply IHHt1. { eassumption. } reflexivity. }
+      rewrite app_comm_cons. destruct (eqb_spec x arg); subst; (eapply IHHt2; [| reflexivity]); constructor; eassumption.
     + econstructor; [eapply IHHt1 | eapply IHHt2 |]; try reflexivity; eassumption.
 Qed.
 
@@ -213,10 +247,27 @@ Proof.
   induction Ht; intros; subst; simpl in *; try solve [constructor].
   - constructor. apply find_kv_exchange; assumption.
   - constructor. { assumption. } apply IHHt. { assumption. } reflexivity.
-  - econstructor. { apply IHHt1. { assumption. } reflexivity. } destruct arg. 2: { apply IHHt2. { assumption. } reflexivity. }
+  - econstructor; [apply IHHt1 | apply IHHt2]; try assumption; reflexivity.
+  - econstructor; try eassumption. { apply IHHt1. { assumption. } reflexivity. }
+    rewrite app_comm_cons. apply IHHt2. { assumption. } reflexivity.
+  - econstructor; try eassumption. { apply IHHt1. { assumption. } reflexivity. }
     rewrite app_comm_cons. apply IHHt2. { assumption. } reflexivity.
   - econstructor; [apply IHHt1 | apply IHHt2 |]; try eassumption; reflexivity.
 Qed.
+
+(*
+(* This is actually crucial! We need to know when we have dependent types or not. *)
+Theorem structural_static_fora_none : forall ctx t arg ty body,
+  Static t ->
+  StructurallyTyped ctx t (TmForA arg ty body) ->
+  arg = None.
+Proof.
+  intros ctx t arg ty body Hs Ht. remember (TmForA arg ty body) as fora eqn:Ef. generalize dependent arg.
+  generalize dependent ty. generalize dependent body. generalize dependent Hs.
+  induction Ht; intros; subst; simpl in *; try discriminate Ef.
+  generalize dependent body. generalize dependent Hs.
+Qed.
+*)
 
 Theorem structural_subst_typed : forall pre x y t t' xt ctx ty,
   Static t ->
@@ -239,25 +290,40 @@ Proof.
       destruct a. simpl in *. invert H; constructor. { assumption. }
       apply Decidable.not_or in Hi as [Hx Hi]. apply IHpre; assumption.
   - invert Hh. invert Hf. constructor.
-  - invert Ht. invert Hs. invert Hh; invert Hf.
-    + invert H11. constructor. { assumption. }
-      eapply IHHt; [assumption | | eassumption | | eassumption | reflexivity]; constructor; try eassumption. constructor.
-    + constructor. { eapply structural_subst_atom_id; [eexists; split |]; eassumption. }
-      eapply IHHt; [assumption | | eassumption | | eassumption | reflexivity]; constructor; eassumption.
+  - invert Hs. invert H1. invert Hh; invert Hf.
+    + invert H11. constructor. { assumption. } eapply IHHt; try eassumption;
+      [constructor; assumption | | constructor; eassumption | reflexivity]. constructor. { assumption. } constructor.
+    + constructor. { eapply structural_subst_atom_id; [| eassumption]. eexists. split; eassumption. }
+      eapply IHHt; [constructor; eassumption | | eassumption | constructor; eassumption | eassumption | reflexivity].
+      constructor; assumption.
+  - invert Hh. invert Hf. invert Hs. assert (structural_subst x y ty = ty'0). {
+      apply reflect_structural_subst. eexists. split; eassumption. } subst. assert (A : structural_subst x y ty = ty). {
+      apply reflect_structural_subst. eapply structural_subst_not_in. { eassumption. } intros []. } rewrite A in *.
+    econstructor; [eapply IHHt1 | eapply IHHt2]; try eassumption; reflexivity.
   - invert Hs. invert Hh; invert Hf.
-    + invert H9. assert (structural_subst x y ty = ty'0). { apply reflect_structural_subst. eexists. split; eassumption. }
-      subst. assert (structural_subst x y ty = ty). { apply reflect_structural_subst.
-        eapply structural_subst_not_in. { eassumption. } intros []. }
-      repeat rewrite H in *. econstructor.
-      * eapply IHHt1; [| | | | | reflexivity]; eassumption.
-      * eapply (structural_type_shadow ((x, ty) :: pre)) in Ht2. { assumption. } constructor.
-    + assert (structural_subst x y ty = ty'0). { apply reflect_structural_subst. eexists. split; eassumption. } subst.
-      assert (structural_subst x y ty = ty). {
-        apply reflect_structural_subst. eapply structural_subst_not_in. { eassumption. } intros []. }
-      repeat rewrite H in *. econstructor; [eapply IHHt1; [| | | | | reflexivity]; eassumption |].
-      destruct arg. 2: { eapply IHHt2; [| | | | | reflexivity]; eassumption. }
-      rewrite app_comm_cons. eapply IHHt2; [| | | | | reflexivity]; try eassumption.
-      intros [C | C]. { subst. apply H5. reflexivity. } apply Hi in C as [].
+    + invert H11. assert (structural_subst arg y ty = ty'0). {
+        apply reflect_structural_subst. eexists. split; eassumption. } subst. assert (A : structural_subst arg y ty = ty). {
+        apply reflect_structural_subst. eapply structural_subst_not_in. { eassumption. } intros []. } rewrite A in *.
+      econstructor; [eassumption | assumption | eapply IHHt1; try eassumption; reflexivity |].
+      rewrite app_comm_cons in Ht2. apply <- structural_type_shadow in Ht2. { assumption. } constructor.
+    + assert (structural_subst x y ty = ty'0). {
+        apply reflect_structural_subst. eexists. split; eassumption. } subst. assert (A : structural_subst x y ty = ty). {
+        apply reflect_structural_subst. eapply structural_subst_not_in. { eassumption. } intros []. } rewrite A in *.
+      econstructor; [eassumption | assumption | eapply IHHt1; try eassumption; reflexivity |].
+      rewrite app_comm_cons. eapply IHHt2; try reflexivity; try eassumption.
+      intros [C | C]. { subst. apply H7. reflexivity. } apply Hi in C as [].
+  - invert Hs. invert Hh; invert Hf.
+    + invert H11. assert (structural_subst arg y ty = ty'0). {
+        apply reflect_structural_subst. eexists. split; eassumption. } subst. assert (A : structural_subst arg y ty = ty). {
+        apply reflect_structural_subst. eapply structural_subst_not_in. { eassumption. } intros []. } rewrite A in *.
+      econstructor; [eassumption | assumption | eapply IHHt1; try eassumption; reflexivity |].
+      rewrite app_comm_cons in Ht2. apply <- structural_type_shadow in Ht2. { assumption. } constructor.
+    + assert (structural_subst x y ty = ty'0). {
+        apply reflect_structural_subst. eexists. split; eassumption. } subst. assert (A : structural_subst x y ty = ty). {
+        apply reflect_structural_subst. eapply structural_subst_not_in. { eassumption. } intros []. } rewrite A in *.
+      econstructor; [eassumption | assumption | eapply IHHt1; try eassumption; reflexivity |].
+      rewrite app_comm_cons. eapply IHHt2; try reflexivity; try eassumption.
+      intros [C | C]. { subst. apply H7. reflexivity. } apply Hi in C as [].
   - invert Hs. invert Hh. invert Hf. destruct arg as [arg |]; invert H;
     (econstructor; [eapply IHHt1 | eapply IHHt2 | constructor]); try reflexivity; try eassumption. clear IHHt1 IHHt2.
 Abort.
