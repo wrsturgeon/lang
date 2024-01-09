@@ -4,6 +4,7 @@ From Lang Require Import
   StructuralFreeVariables
   Terms.
 
+(* TODO: Not very confident that this definition is right. Scroll down for the more straightforward version.
 (* Static, i.e. not (anywhere) dependently typed.
  * Note that this is exactly the same under structural and non-structural interpretation!
  * In either case, we'd use `StructurallyClosed` and `StructurallyStatic` at the type level,
@@ -55,4 +56,38 @@ Proof.
   destruct (structural_fv t1) eqn:E; assert (A := E); simpl in E; rewrite E; repeat constructor;
   try apply reflect_structural_fv; try assumption; intro C; invert C; [invert H4; rename H7 into H6 |];
   apply reflect_structural_fv in H6; rewrite A in H6; discriminate H6.
+Qed.
+*)
+
+Inductive StaticType : term -> Prop :=
+  | StaticTyVoid :
+      StaticType TmVoid
+  | StaticTyStar : forall univ,
+      StaticType (TmStar univ)
+    (* nothing for VarS *)
+  | StaticTyAtom : forall id,
+      StaticType (TmAtom id)
+    (* nothing for Pack *)
+  | StaticTyForA : forall ty body,
+      StaticType ty -> (* TODO: Can this be inferred from the rest of the definition? *)
+      StaticType body ->
+      StaticType (TmForA None ty body)
+    (* TODO: Is the below rule necessary, or can we just evaluate? *)
+  | StaticTyAppl : forall f x,
+      StaticType f ->
+      StaticType x ->
+      StaticType (TmAppl f x)
+  .
+
+Lemma static_type_structurally_closed : forall ty,
+  StaticType ty ->
+  StructurallyClosed ty.
+Proof. intros. induction H; simpl in *; econstructor; try rewrite app_nil_r; try reflexivity; assumption. Qed.
+
+Lemma static_type_closed : forall ty,
+  StaticType ty ->
+  Closed ty.
+Proof.
+  intros. induction H; simpl in *; econstructor; try rewrite app_nil_r; try constructor; try assumption.
+  apply static_type_structurally_closed. assumption.
 Qed.
